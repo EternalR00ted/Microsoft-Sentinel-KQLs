@@ -1,1 +1,15 @@
-
+// --- Cobalt Strike Beacon JA3/JA3S (APT31) ---
+let suspicious_ja3  = dynamic(["72a589da586844d7f0818ce684948eea", "a0e9f5d64349fb13191bc781f81f42e1"]);
+let suspicious_ja3s = dynamic(["b742b407517bac9536a77a7b0fee28e9"]);
+DeviceNetworkEvents
+| where TimeGenerated >= ago(7d)
+| extend ja3 = tostring(TLSClientFingerprint),
+          ja3s = tostring(TLSServerFingerprint),
+          ua = tostring(HttpUserAgent)
+| where ja3 in (suspicious_ja3) or ja3s in (suspicious_ja3s)
+| summarize conn_count = count(),
+            firstSeen  = min(TimeGenerated),
+            lastSeen   = max(TimeGenerated)
+            by DeviceName, RemoteIP, RemoteUrl, RemotePort
+| sort by conn_count desc
+// 👉 Tune: add JA3s from red-team baselines; correlate with periodic traffic timing.
