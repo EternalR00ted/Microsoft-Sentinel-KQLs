@@ -1,0 +1,10 @@
+// Unsigned module load by core process: potential exploit or persistence
+DeviceImageLoadEvents
+| where TimeGenerated >= ago(30d)
+| where isnull(VerifiedSignature) or VerifiedSignature == "Unsigned"
+| where InitiatingProcessFileName in ("services.exe","svchost.exe",
+                                      "lsass.exe","winlogon.exe","explorer.exe")
+| project TimeGenerated, DeviceName,
+          InitiatingProcessFileName, FileName, FilePath, FileHash, VerifiedSignature
+| sort by TimeGenerated desc
+// Tune: verify vendor signing; correlate with privilege escalation indicators.
