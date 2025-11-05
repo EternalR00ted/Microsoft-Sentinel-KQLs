@@ -1,0 +1,26 @@
+// --- File created from hosting URL and executed within 5 min ---
+let hosting = dynamic([
+    "raw.githubusercontent.com",
+    "githubusercontent.com",
+    "dropboxusercontent.com",
+    "drive.google.com",
+    "gitlab.com"]);
+DeviceFileEvents
+| where TimeGenerated >= ago(7d)
+| where Url in (hosting) or FileName has_any ("github", "dropbox", "gitlab")
+| project FileName, FolderPath, FileHash, DeviceId, DeviceName, FileCreatedTime = TimeGenerated
+| join kind=inner (
+    DeviceProcessEvents
+    | where TimeGenerated >= ago(7d)
+    | project DeviceId, DeviceName,
+              ProcessFileName = FileName,
+              ProcessCommandLine,
+              ProcessStartTime = TimeGenerated,
+              ProcessFileHash
+) on DeviceId
+| where ProcessStartTime between (FileCreatedTime .. FileCreatedTime + 5m)
+| project FileCreatedTime, ProcessStartTime, DeviceName,
+          FileName, ProcessFileName, ProcessCommandLine,
+          FileHash, ProcessFileHash
+| sort by ProcessStartTime desc
+// 👉 Tune: extend window (5 min → 10 min) for slower systems.
