@@ -23,4 +23,4 @@ DeviceFileEvents
           FileName, ProcessFileName, ProcessCommandLine,
           FileHash, ProcessFileHash
 | sort by ProcessStartTime desc
-// 👉 Tune: extend window (5 min → 10 min) for slower systems.
+// Tune: extend window (5 min → 10 min) for slower systems.
