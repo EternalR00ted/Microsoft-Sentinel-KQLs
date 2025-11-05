@@ -17,4 +17,4 @@ DeviceNetworkEvents
           RemotePort
 | extend Reason = "Outbound to public file-hosting service (APT31 staging pattern)"
 | sort by TimeGenerated desc
-// 👉 Tune: add internal allow-lists or enterprise GitHub domains.
+// Tune: add internal allow-lists or enterprise GitHub domains.
