@@ -11,4 +11,4 @@ DeviceProcessEvents
           InitiatingProcessFileName, ProcessCommandLine,
           AccountName
 | sort by TimeGenerated desc
-// 👉 Tune: exclude known admin scripts; alert when parent = WINWORD.EXE / EXCEL.EXE.
+// Tune: exclude known admin scripts; alert when parent = WINWORD.EXE / EXCEL.EXE.
