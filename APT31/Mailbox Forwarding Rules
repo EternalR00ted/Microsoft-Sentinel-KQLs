@@ -1,0 +1,9 @@
+// Exchange Online: new or modified Inbox rule with forwarding
+OfficeActivity
+| where TimeGenerated >= ago(30d)
+| where Operation has_any ("New-InboxRule","CreateInboxRule","Set-InboxRule")
+   or (Operation has "Update" and Details has "forward")
+| project TimeGenerated, UserId, Operation, ObjectId,
+          ClientIP, Workload, Detail = AdditionalFields
+| sort by TimeGenerated desc
+// Tune: flag forwarding to external domains.
