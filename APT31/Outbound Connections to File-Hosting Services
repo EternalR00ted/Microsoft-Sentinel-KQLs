@@ -1,0 +1,20 @@
+// --- APT31 / Cobalt-Strike payload staging: GitHub / Dropbox / Drive ---
+DeviceNetworkEvents
+| where TimeGenerated >= ago(7d)
+| where RemoteUrl has_any (
+        "github.com",
+        "raw.githubusercontent.com",
+        "dropbox.com",
+        "dl.dropboxusercontent.com",
+        "drive.google.com",
+        "gitlab.com")
+| project TimeGenerated,
+          DeviceName,
+          InitiatingProcessFileName,
+          InitiatingProcessCommandLine,
+          RemoteUrl,
+          RemoteIP,
+          RemotePort
+| extend Reason = "Outbound to public file-hosting service (APT31 staging pattern)"
+| sort by TimeGenerated desc
+// 👉 Tune: add internal allow-lists or enterprise GitHub domains.
