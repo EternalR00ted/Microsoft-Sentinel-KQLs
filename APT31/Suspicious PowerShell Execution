@@ -1,0 +1,14 @@
+// --- PowerShell download-exec / obfuscation indicators ---
+DeviceProcessEvents
+| where TimeGenerated >= ago(14d)
+| where ProcessFileName in~ ("powershell.exe", "pwsh.exe")
+| where ProcessCommandLine has_any (
+        "Invoke-WebRequest", "Invoke-RestMethod",
+        "DownloadString", "IEX ", "IEX(",
+        "-EncodedCommand", "FromBase64String",
+        "Start-BitsTransfer", "New-Object System.Net.WebClient")
+| project TimeGenerated, DeviceName,
+          InitiatingProcessFileName, ProcessCommandLine,
+          AccountName
+| sort by TimeGenerated desc
+// 👉 Tune: exclude known admin scripts; alert when parent = WINWORD.EXE / EXCEL.EXE.
