@@ -1,0 +1,15 @@
+// Excessive network logons (4624 type 3) indicating possible lateral movement
+SecurityEvent
+| where TimeGenerated >= ago(7d)
+| where EventID == 4624
+| extend LogonType = tostring(parse_json(EventData).LogonType),
+          Account   = tostring(parse_json(EventData).TargetUserName),
+          Computer  = tostring(Computer)
+| where LogonType == "3"
+| summarize distinct_targets = dcount(Computer),
+            targets = make_set(Computer, 50)
+            by Account, AccountDomain = tostring(parse_json(EventData).TargetDomainName)
+| where distinct_targets >= 5
+| project Account, AccountDomain, distinct_targets, targets
+| sort by distinct_targets desc
+// Tune: exclude service accounts and jump hosts.
