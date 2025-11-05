@@ -1,0 +1,14 @@
+// Beaconing heuristic: few connections per day over many days
+DeviceNetworkEvents
+| where TimeGenerated >= ago(30d)
+| summarize conn_count = count(),
+            firstSeen = min(TimeGenerated),
+            lastSeen  = max(TimeGenerated),
+            days_active = dcount(startofday(TimeGenerated))
+            by DeviceName, RemoteIP, RemoteUrl
+| extend avg_per_day = todouble(conn_count) / todouble(days_active)
+| where days_active >= 5 and avg_per_day <= 10 and conn_count >= 5
+| project DeviceName, RemoteIP, RemoteUrl,
+          conn_count, days_active, avg_per_day, firstSeen, lastSeen
+| sort by days_active desc, avg_per_day asc
+// Tune: adjust thresholds to reduce noise.
