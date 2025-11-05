@@ -1,0 +1,11 @@
+// --- Azure AD audit: suspicious app consent / admin grant ---
+AuditLogs
+| where TimeGenerated >= ago(30d)
+| where OperationName has_any ("ConsentToApplication", "Grant admin consent",
+                               "Update application", "Add service principal")
+| project TimeGenerated, LoggedByService,
+          InitiatedBy = tostring(InitiatedBy.user.displayName),
+          ActivityDisplayName, TargetResources,
+          Result, CorrelationId
+| sort by TimeGenerated desc
+// Tune: alert on unknown apps or external multi-tenant IDs.
