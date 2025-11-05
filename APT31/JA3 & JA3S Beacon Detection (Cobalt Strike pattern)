@@ -12,4 +12,4 @@ DeviceNetworkEvents
             lastSeen   = max(TimeGenerated)
             by DeviceName, RemoteIP, RemoteUrl, RemotePort
 | sort by conn_count desc
-// 👉 Tune: add JA3s from red-team baselines; correlate with periodic traffic timing.
+// Tune: add JA3s from red-team baselines; correlate with periodic traffic timing.
