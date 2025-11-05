@@ -1,0 +1,19 @@
+// Azure AD impossible-travel / new-country sign-ins
+let lookback = 90d;
+let recent = SigninLogs
+| where TimeGenerated >= ago(7d)
+| project TimeGenerated, UserPrincipalName,
+          IPAddress,
+          Country = tostring(LocationDetails.countryOrRegion),
+          AppDisplayName, ConditionalAccessStatus;
+let baseline = SigninLogs
+| where TimeGenerated between(ago(lookback) .. ago(7d))
+| summarize baseline_countries = make_set(tostring(LocationDetails.countryOrRegion))
+          by UserPrincipalName;
+recent
+| join kind=leftouter baseline on UserPrincipalName
+| where Country !in (baseline_countries) or baseline_countries == dynamic([])
+| project TimeGenerated, UserPrincipalName, Country,
+          baseline_countries, IPAddress, AppDisplayName
+| sort by TimeGenerated desc
+// Tune: combine with velocity or device ID correlation.
