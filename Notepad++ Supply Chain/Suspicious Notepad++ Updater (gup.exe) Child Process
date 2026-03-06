@@ -1,0 +1,17 @@
+DeviceProcessEvents
+| where TimeGenerated >= ago(365d)
+// Look for the Notepad++ Updater as the parent process
+| where InitiatingProcessFileName =~ "gup.exe"
+// Exclude the legitimate Notepad++ executable to reduce noise (GUP often restarts it post update)
+// | where FileName !~ "notepad++.exe"
+// Project the specific columns you requested for analysis
+| project Timestamp, 
+          DeviceName, 
+          InitiatingProcessFileName, 
+          InitiatingProcessCommandLine,
+          InitiatingProcessSHA256, // Helps verify if the GUP binary itself was tampered with
+          FileName, // The suspicious file being installed/executed (e.g., update.exe)
+          FolderPath, 
+          ProcessCommandLine, 
+          SHA256 // Hash of the spawned file
+| sort by Timestamp desc
