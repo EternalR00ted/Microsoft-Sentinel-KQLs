@@ -1,0 +1,28 @@
+// Step 1: Find any unexpected child processes spawned by the Notepad++ updater
+let GupChildren = DeviceProcessEvents
+| where InitiatingProcessFileName =~ "gup.exe"
+// Exclude the legitimate restart of Notepad++ 
+//| where FileName !~ "notepad++.exe"
+| project DeviceId, 
+          ProcessId, // ID of the newly spawned process (e.g., update.exe)
+          ProcessCreationTime = Timestamp, 
+          ChildFileName = FileName, 
+          ChildCommandLine = ProcessCommandLine,
+          FolderPath;
+// Step 2: Look at network events and join them to our suspicious child processes
+DeviceNetworkEvents
+// Keep it loose: filter out internal LAN traffic to focus on external C2 or downloads
+| where RemoteIPType == "Public" 
+// Join where the machine is the same, and the process making the network call is the child we identified above
+| join kind=inner (GupChildren) on DeviceId, $left.InitiatingProcessId == $right.ProcessId
+// Ensure the network event happened at or after the process was created
+| where Timestamp >= ProcessCreationTime
+| project NetworkEventTime = Timestamp, 
+          DeviceName, 
+          ChildFileName, // The file gup.exe spawned (e.g., update.exe, script.exe)
+          ChildCommandLine, 
+          RemoteIP, 
+          RemoteUrl, 
+          RemotePort, 
+          ActionType
+| sort by NetworkEventTime desc
