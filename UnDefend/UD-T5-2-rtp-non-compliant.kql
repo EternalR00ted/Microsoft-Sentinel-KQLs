@@ -1,0 +1,24 @@
+// =============================================================================
+// UnDefend - Defender Real-Time Protection Non-Compliant
+// =============================================================================
+// Rule ID:        T5-2
+// Exploit:        UnDefend
+// Severity:       High
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 3 hours
+// Auto-Response:  ?
+// Deploy As:      Sentinel Analytics Rule
+// =============================================================================
+
+DeviceTvmSecureConfigurationAssessment
+| where ConfigurationId == "scid-2012"
+| where IsCompliant == 0
+| where IsApplicable == 1
+| join kind=inner (
+    DeviceInfo
+    | where Timestamp > ago(1d)
+    | summarize arg_max(Timestamp, *) by DeviceId
+) on DeviceId
+| project DeviceId, DeviceName, OSPlatform,
+          ConfigurationId, IsCompliant, IsApplicable
