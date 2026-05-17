@@ -1,0 +1,36 @@
+// =============================================================================
+// Nightmare-Eclipse - RedSun and UnDefend Chained Exploitation
+// =============================================================================
+// Rule ID:        COMBO-2
+// Exploit:        Shared
+// Severity:       Critical
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 3 hours
+// Auto-Response:  Isolate device + Collect investigation package + Initiate investigation + Email SOC
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+let RedSunDevices = DeviceFileEvents
+| where InitiatingProcessFileName =~ "MsMpEng.exe"
+| where FolderPath startswith @"C:\Windows\System32\"
+| where ActionType in ("FileCreated", "FileModified")
+| where FileName endswith ".exe" or FileName endswith ".dll"
+| summarize RSCount = count(),
+            (RSTimestamp, RSReportId) = arg_max(Timestamp, ReportId)
+    by DeviceId, DeviceName;
+let UnDefendDevices = DeviceFileEvents
+| where FolderPath has @"Definition Updates"
+| where FileName in~ ("mpavbase.vdm", "mpavbase.lkg", "mpasbase.vdm")
+| where InitiatingProcessFileName !in~ (
+    "MsMpEng.exe", "MpCmdRun.exe", "NisSrv.exe",
+    "MpSigStub.exe", "MpDlpService.exe",
+    "SecurityHealthService.exe", "TiWorker.exe", "svchost.exe"
+)
+| summarize UDCount = count(),
+            UDTimestamp = max(Timestamp)
+    by DeviceId, DeviceName;
+RedSunDevices
+| join kind=inner UnDefendDevices on DeviceId
+| project Timestamp = RSTimestamp, DeviceId, ReportId = RSReportId,
+          DeviceName, RSCount, RSTimestamp, UDCount, UDTimestamp

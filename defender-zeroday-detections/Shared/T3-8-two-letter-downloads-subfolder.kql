@@ -1,0 +1,27 @@
+// =============================================================================
+// Nightmare-Eclipse - Suspicious 2-Letter Subfolder in Downloads
+// =============================================================================
+// Rule ID:        T3-8
+// Exploit:        Shared
+// Severity:       Medium
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 6 hours
+// Auto-Response:  Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Description:
+// Huntress observed attackers staging in `Downloads\<2-letter>\` subfolders
+// (e.g., `Downloads\xy\z.exe`).
+// =============================================================================
+
+DeviceFileEvents
+| where FolderPath matches regex @"\\Users\\[^\\]+\\Downloads\\[a-zA-Z0-9]{2}\\"
+| where FileName endswith ".exe" or FileName endswith ".dll"
+| where ActionType == "FileCreated"
+| where InitiatingProcessFileName !in~ ("msedge.exe", "chrome.exe", "firefox.exe", "iexplore.exe")
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, FolderPath, SHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName, FileOriginUrl

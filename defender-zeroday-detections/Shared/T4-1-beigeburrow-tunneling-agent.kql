@@ -1,0 +1,45 @@
+// =============================================================================
+// Nightmare-Eclipse Intrusion - BeigeBurrow Tunneling Agent
+// =============================================================================
+// Rule ID:        T4-1
+// Exploit:        Shared
+// Severity:       Critical
+// Category:       Command and Control
+// MITRE ATT&CK:   T1572 — Protocol Tunneling
+// Frequency:      Every 1 hour
+// Auto-Response:  Isolate device + Initiate investigation
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Description:
+// The Go-based tunneling agent Huntress observed alongside the
+// Nightmare-Eclipse tools.
+// =============================================================================
+
+DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where ProcessCommandLine has_any (
+    "agent.exe -server",
+    "-server staybud.dpdns.org",
+    "staybud.dpdns",
+    "-server",
+    "-hide"
+)
+| where ProcessCommandLine has "-hide"
+   or ProcessCommandLine has "staybud.dpdns"
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, FolderPath, ProcessCommandLine, SHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName
+| union (
+    DeviceNetworkEvents
+    | where RemoteUrl has "staybud.dpdns.org"
+       or RemoteUrl has "dpdns.org"
+    | project Timestamp, DeviceId, ReportId, DeviceName,
+              FileName = InitiatingProcessFileName,
+              FolderPath = InitiatingProcessFolderPath,
+              ProcessCommandLine = InitiatingProcessCommandLine,
+              SHA256 = InitiatingProcessSHA256,
+              InitiatingProcessFileName, InitiatingProcessCommandLine,
+              InitiatingProcessAccountName
+)

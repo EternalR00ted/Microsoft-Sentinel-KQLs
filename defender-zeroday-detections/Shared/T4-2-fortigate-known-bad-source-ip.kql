@@ -1,0 +1,34 @@
+// =============================================================================
+// Nightmare-Eclipse Intrusion - FortiGate VPN from Observed Bad IP
+// =============================================================================
+// Rule ID:        T4-2
+// Exploit:        Shared
+// Severity:       Critical
+// Category:       Initial Access
+// MITRE ATT&CK:   T1078 — Valid Accounts
+// Frequency:      Every 1 hour
+// Auto-Response:  Block IP at edge + Force user MFA reset
+// Deploy As:      Sentinel Analytics Rule
+// =============================================================================
+//
+// Description:
+// Specific source IPs observed in Huntress's investigation. This is an
+// intelligence-driven detection — useful if you ingest VPN logs into
+// Sentinel.
+// Notes:
+// Note: This rule is a known-IoC tripwire. The IPs may not be in play during
+// your investigation, but the rule has near-zero FP cost.
+// =============================================================================
+
+// Sentinel-only — assumes FortiGate/CommonSecurityLog ingestion
+let BadIPs = dynamic([
+    "78.29.48.29",      // Russia
+    "212.232.23.69",    // Singapore
+    "179.43.140.214"    // Switzerland
+]);
+CommonSecurityLog
+| where DeviceVendor =~ "Fortinet"
+| where DeviceProduct in~ ("FortiGate", "Fortigate")
+| where SourceIP in (BadIPs) or DestinationIP in (BadIPs)
+| project TimeGenerated, SourceIP, DestinationIP, SourceUserName,
+          DeviceAction, RequestURL, AdditionalExtensions

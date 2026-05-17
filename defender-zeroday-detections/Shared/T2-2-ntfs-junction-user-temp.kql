@@ -1,0 +1,43 @@
+// =============================================================================
+// Nightmare-Eclipse - NTFS Junction Created in User Temp Path
+// =============================================================================
+// Rule ID:        T2-2
+// Exploit:        Shared
+// Severity:       High
+// Category:       Privilege Escalation
+// MITRE ATT&CK:   T1574
+// Frequency:      Every 3 hours
+// Auto-Response:  Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Description:
+// The core TOCTOU primitive shared by BlueHammer and RedSun. Watches for
+// `mklink /j` or `mklink /d` invocations and direct junction creation in
+// temp/user paths.
+// Notes:
+// Tuning notes:
+// - For PowerShell New-Item -ItemType Junction use a separate query against
+//   DeviceProcessEvents with FileName in~ ("powershell.exe","pwsh.exe") and
+//   ProcessCommandLine has "ItemType Junction".
+// =============================================================================
+
+DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where FileName =~ "cmd.exe"
+| where ProcessCommandLine has_any ("mklink /j", "mklink /d", "mklink /J", "mklink /D")
+| where ProcessCommandLine has_any (
+    @"\AppData\Local\Temp\",
+    @"\Users\",
+    @"\ProgramData\",
+    @"$env:TEMP",
+    "%TEMP%"
+)
+| where InitiatingProcessFileName !in~ (
+    "msiexec.exe", "TiWorker.exe", "TrustedInstaller.exe",
+    "setup.exe", "WindowsUpdateBox.exe", "wuauclt.exe"
+)
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName, AccountName

@@ -1,0 +1,58 @@
+// =============================================================================
+// Nightmare-Eclipse - Hands-on-Keyboard Enumeration Sequence
+// =============================================================================
+// Rule ID:        T1-1
+// Exploit:        Shared
+// Severity:       High
+// Category:       Discovery
+// MITRE ATT&CK:   T1033 (whoami), T1555 (cmdkey), T1069 (net group)
+// Frequency:      Every 1 hour
+// Auto-Response:  Collect investigation package + Email SOC
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Description:
+// The exact enumeration triad Huntress observed before every
+// Nightmare-Eclipse exploitation attempt.
+// Notes:
+// Expected FP rate: Low. Legitimate users rarely run all three within 30
+// minutes. SCCM, MSP tools, and AD admins are notable exceptions — add their
+// parent processes to an exclusion list after baselining.
+//
+// Tuning notes:
+// - The 30-minute correlation window is the operational signature of
+//   hands-on-keyboard reconnaissance.
+// - Pair the resulting WhoamiUser and DeviceId with subsequent suspicious
+//   binary execution (T2- or T3- rules) within 60 minutes for
+//   highest-confidence kill chain detection.
+// =============================================================================
+
+let WhoamiPriv = DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where FileName =~ "whoami.exe"
+| where ProcessCommandLine has "/priv"
+| project WhoamiTime = Timestamp, DeviceId, DeviceName,
+          WhoamiReportId = ReportId,
+          WhoamiUser = InitiatingProcessAccountName,
+          WhoamiParent = InitiatingProcessFileName,
+          WhoamiParentCmd = InitiatingProcessCommandLine;
+let CmdkeyList = DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where FileName =~ "cmdkey.exe"
+| where ProcessCommandLine has "/list"
+| project CmdkeyTime = Timestamp, DeviceId,
+          CmdkeyUser = InitiatingProcessAccountName;
+let NetGroup = DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where FileName in~ ("net.exe", "net1.exe")
+| where ProcessCommandLine has "group"
+| project NetGroupTime = Timestamp, DeviceId,
+          NetGroupCmd = ProcessCommandLine;
+WhoamiPriv
+| join kind=inner CmdkeyList on DeviceId
+| where CmdkeyTime between (WhoamiTime - 30m .. WhoamiTime + 30m)
+| join kind=inner NetGroup on DeviceId
+| where NetGroupTime between (WhoamiTime - 30m .. WhoamiTime + 30m)
+| project Timestamp = WhoamiTime, DeviceId, ReportId = WhoamiReportId,
+          DeviceName, WhoamiUser, WhoamiParent, WhoamiParentCmd,
+          CmdkeyUser, CmdkeyTime, NetGroupTime, NetGroupCmd

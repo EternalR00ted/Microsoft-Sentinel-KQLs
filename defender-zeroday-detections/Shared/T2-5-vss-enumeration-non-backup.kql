@@ -1,0 +1,38 @@
+// =============================================================================
+// BlueHammer - Volume Shadow Copy Enumeration by Non-Backup Process
+// =============================================================================
+// Rule ID:        T2-5
+// Exploit:        Shared
+// Severity:       High
+// Category:       Discovery
+// MITRE ATT&CK:   T1006 — Direct Volume Access
+// Frequency:      Every 6 hours
+// Auto-Response:  Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Description:
+// Cyderes-recommended high-confidence indicator. `NtQueryDirectoryObject`
+// targeting `HarddiskVolumeShadowCopy*` from user-space has no legitimate use
+// case outside system and backup tooling.
+// =============================================================================
+
+DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where ProcessCommandLine has_any (
+    "HarddiskVolumeShadowCopy",
+    "\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy",
+    "vssadmin list shadows",
+    "Get-WmiObject -Class Win32_ShadowCopy",
+    "Get-CimInstance Win32_ShadowCopy"
+)
+| where InitiatingProcessFileName !in~ (
+    "vssadmin.exe", "wbadmin.exe", "VSSVC.exe",
+    "svchost.exe", "msiexec.exe",
+    "MsMpEng.exe", "TrustedInstaller.exe",
+    "WindowsBackup.exe", "vshadow.exe"
+)
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName, AccountName

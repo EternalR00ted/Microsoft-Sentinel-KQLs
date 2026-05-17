@@ -1,0 +1,32 @@
+// =============================================================================
+// Nightmare-Eclipse - Full Kill-Chain Detection (Enum → Drop → Trigger)
+// =============================================================================
+// Rule ID:        COMBO-1
+// Exploit:        Shared
+// Severity:       Critical
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 1 hour
+// Auto-Response:  Isolate device + Force MFA reset + Initiate investigation + Email SOC + Page on-call
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+let EnumActivity = DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where FileName =~ "whoami.exe" and ProcessCommandLine has "/priv"
+| project EnumTime = Timestamp, DeviceId, DeviceName,
+          EnumUser = InitiatingProcessAccountName;
+let BinaryDrop = DeviceFileEvents
+| where FileName in~ ("FunnyApp.exe", "RedSun.exe", "UnDefend.exe", "undef.exe", "z.exe")
+   or (FolderPath matches regex @"\\Users\\[^\\]+\\Downloads\\[a-zA-Z0-9]{2}\\" and FileName endswith ".exe")
+| where ActionType == "FileCreated"
+| project DropTime = Timestamp, DeviceId,
+          DropReportId = ReportId,
+          DropFileName = FileName, DropFolderPath = FolderPath,
+          DropSHA256 = SHA256;
+EnumActivity
+| join kind=inner BinaryDrop on DeviceId
+| where DropTime between (EnumTime .. (EnumTime + 4h))
+| project Timestamp = DropTime, DeviceId, ReportId = DropReportId,
+          DeviceName, EnumTime, EnumUser,
+          DropFileName, DropFolderPath, DropSHA256

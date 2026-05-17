@@ -1,0 +1,50 @@
+MIT License
+
+Copyright (c) 2026 Khalid (Eternalr00ted)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+ATTRIBUTION
+
+This detection pack incorporates detection logic adapted from publicly
+available work licensed under MIT and compatible terms. Specific attribution:
+
+  - 3ch0p01nt/RedSun_Undefend (MIT) — RedSun and UnDefend primitive detection
+    patterns. Original logic for several RS-T3-* and UD-T2-* rules.
+
+  - jkerai1/KQL-Queries — REDSUN named pipe detection pattern
+    (DesiredAccess + AcceptRemote signature).
+
+  - microsoft/Microsoft-365-Defender-Hunting-Queries (MIT) — TVM table
+    parsing patterns used in BH-T5-3.
+
+Production hardening, Tier 0 / Tier 1 / Tier 4 rules, combined kill-chain
+correlation, MITRE mapping, false-positive analysis, and the Defender XDR
+vs Sentinel deployment split are original work.
+
+Vulnerability research credit:
+  - BlueHammer (CVE-2026-33825) — Zen Dodd and Yuanpei Xu (HUST / Diffract)
+    via Microsoft, with corresponding public PoC by Chaotic Eclipse /
+    Nightmare-Eclipse.
+  - RedSun, UnDefend — Chaotic Eclipse / Nightmare-Eclipse.
+
+Active exploitation reporting:
+  - Huntress Labs — primary in-the-wild documentation.
