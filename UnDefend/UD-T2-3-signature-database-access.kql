@@ -1,0 +1,31 @@
+// =============================================================================
+// UnDefend - Unauthorized Access to Defender Signature Database
+// =============================================================================
+// Rule ID:        T2-3
+// Exploit:        UnDefend
+// Severity:       High
+// Category:       Defense Evasion
+// MITRE ATT&CK:   T1562.001
+// Frequency:      Every 3 hours
+// Auto-Response:  Isolate device + Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+DeviceFileEvents
+| where FolderPath has @"Definition Updates"
+    or FolderPath startswith @"C:\Windows\System32\MRT"
+| where FileName in~ (
+    "mpavbase.vdm", "mpavbase.lkg", "mpasbase.vdm",
+    "mpavdlta.vdm", "mpasdlta.vdm"
+)
+   or FolderPath startswith @"C:\Windows\System32\MRT"
+| where InitiatingProcessFileName !in~ (
+    "MsMpEng.exe", "MpCmdRun.exe", "NisSrv.exe",
+    "MpSigStub.exe", "MpDlpService.exe",
+    "SecurityHealthService.exe", "TiWorker.exe", "svchost.exe",
+    "MRT.exe", "TrustedInstaller.exe", "msiexec.exe", "wuauclt.exe"
+)
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, FolderPath, ActionType,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessFolderPath, InitiatingProcessAccountName
