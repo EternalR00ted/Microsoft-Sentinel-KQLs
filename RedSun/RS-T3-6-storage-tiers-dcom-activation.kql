@@ -1,0 +1,24 @@
+// =============================================================================
+// RedSun - Storage Tiers DCOM Server Activation
+// =============================================================================
+// Rule ID:        T3-6
+// Exploit:        RedSun
+// Severity:       High
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 6 hours
+// Auto-Response:  ?
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where ProcessCommandLine has "50d185b9-fff3-4656-92c7-e4018da4361d"
+| where InitiatingProcessFileName !in~ (
+    "services.exe", "svchost.exe", "dcomlaunch.exe",
+    "MsMpEng.exe", "TrustedInstaller.exe"
+)
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, FolderPath, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          AccountName, AccountSid

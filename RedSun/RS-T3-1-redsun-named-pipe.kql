@@ -1,0 +1,19 @@
+// =============================================================================
+// RedSun - REDSUN Named Pipe IoC
+// =============================================================================
+// Rule ID:        T3-1
+// Exploit:        RedSun
+// Severity:       Critical
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 1 hour
+// Auto-Response:  Isolate device + Initiate investigation
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+DeviceEvents
+| where ActionType == "NamedPipeEvent"
+| where AdditionalFields has "REDSUN"
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName, AdditionalFields
