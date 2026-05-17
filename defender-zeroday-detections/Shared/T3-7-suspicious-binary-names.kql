@@ -1,0 +1,45 @@
+// =============================================================================
+// Nightmare-Eclipse - PoC Binary Names in User-Writable Paths
+// =============================================================================
+// Rule ID:        T3-7
+// Exploit:        Shared
+// Severity:       Critical
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 1 hour
+// Auto-Response:  Isolate device + Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Description:
+// Direct catch of the PoC binary names and Huntress-observed renamed variants
+// in the staging paths attackers used.
+// =============================================================================
+
+let SuspiciousFileNames = dynamic([
+    "FunnyApp.exe", "RedSun.exe", "BlueHammer.exe",
+    "UnDefend.exe", "undef.exe", "z.exe"
+]);
+let SuspiciousPaths = dynamic([
+    @"\Users\",
+    @"\Pictures\",
+    @"\Downloads\"
+]);
+DeviceFileEvents
+| where FileName in~ (SuspiciousFileNames)
+| where FolderPath has_any (SuspiciousPaths)
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, FolderPath, SHA256, ActionType,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName, FileOriginUrl, FileOriginIP
+| union (
+    DeviceProcessEvents
+    | where FileName in~ (SuspiciousFileNames)
+    | where FolderPath has_any (SuspiciousPaths)
+    | project Timestamp, DeviceId, ReportId, DeviceName,
+              FileName, FolderPath, SHA256 = InitiatingProcessSHA256,
+              ActionType, ProcessCommandLine,
+              InitiatingProcessFileName, InitiatingProcessCommandLine,
+              InitiatingProcessAccountName
+)

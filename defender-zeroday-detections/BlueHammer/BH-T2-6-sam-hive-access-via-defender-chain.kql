@@ -1,0 +1,27 @@
+// =============================================================================
+// BlueHammer - SAM Hive Read via Defender Process Chain
+// =============================================================================
+// Rule ID:        T2-6
+// Exploit:        BlueHammer
+// Severity:       Critical
+// Category:       Credential Access
+// MITRE ATT&CK:   T1003.002 — Security Account Manager
+// Frequency:      Every 3 hours
+// Auto-Response:  Isolate device + Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Description:
+// Catches MsMpEng accessing SAM/SYSTEM/SECURITY hives — which only happens
+// when BlueHammer-style redirection is in play.
+// =============================================================================
+
+DeviceFileEvents
+| where InitiatingProcessFileName =~ "MsMpEng.exe"
+| where FileName in~ ("SAM", "SYSTEM", "SECURITY")
+   or FolderPath has @"\Windows\System32\config"
+   or FolderPath has "HarddiskVolumeShadowCopy"
+| where ActionType in ("FileCreated", "FileModified", "FileOpened")
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, FolderPath, ActionType, SHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine

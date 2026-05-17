@@ -1,0 +1,34 @@
+// =============================================================================
+// Nightmare-Eclipse - Defender Detected PoC Execution
+// =============================================================================
+// Rule ID:        T0-1
+// Exploit:        Shared
+// Severity:       Critical
+// Category:       Privilege Escalation
+// MITRE ATT&CK:   T1068
+// Frequency:      Every 1 hour
+// Auto-Response:  Isolate device + Collect investigation package + Initiate investigation
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Notes:
+// Expected FP rate: Zero — these are specific PoC family signatures.
+// =============================================================================
+
+DeviceEvents
+| where ActionType == "AntivirusDetection"
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend ThreatName = tostring(ParsedFields.ThreatName)
+| where ThreatName has_any (
+    "DfndrPEBluHmr",   // BlueHammer family (Huntress-observed in-the-wild)
+    "Halaminer",       // RedSun original PoC family
+    "Wacapew.C",       // RedSun in-the-wild variant (Huntress-observed)
+    "PEBluHmr",        // BlueHammer alternative naming
+    "BluHmr"           // Catch-all
+)
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          ThreatName, FileName, SHA1, FolderPath,
+          WasRemediated = tobool(ParsedFields.WasRemediated),
+          WasExecutingWhileDetected = tobool(ParsedFields.WasExecutingWhileDetected),
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName

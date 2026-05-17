@@ -1,0 +1,35 @@
+// =============================================================================
+// Nightmare-Eclipse - Anomalous Parent of whoami.exe
+// =============================================================================
+// Rule ID:        T1-2
+// Exploit:        Shared
+// Severity:       Medium
+// Category:       Discovery
+// MITRE ATT&CK:   T1033
+// Frequency:      Every 3 hours
+// Auto-Response:  Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+//
+// Description:
+// Captures the Huntress-observed anomaly where `whoami /priv` was spawned
+// from `M365Copilot.exe` — and any similar process injection scenarios.
+// Notes:
+// Expected FP rate: Moderate. Tune the exclusion list against your
+// environment's legitimate parents.
+// =============================================================================
+
+DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where FileName =~ "whoami.exe"
+| where ProcessCommandLine has "/priv" or ProcessCommandLine has "/all"
+| where InitiatingProcessFileName !in~ (
+    "cmd.exe", "powershell.exe", "pwsh.exe",
+    "explorer.exe", "Code.exe", "WindowsTerminal.exe",
+    "OpenSSH-Server.exe", "wsmprovhost.exe",
+    "MsSense.exe", "SenseIR.exe"
+)
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessParentFileName, AccountName, LogonId
