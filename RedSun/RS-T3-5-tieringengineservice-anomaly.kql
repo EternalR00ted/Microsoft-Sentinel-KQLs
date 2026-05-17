@@ -1,0 +1,22 @@
+// =============================================================================
+// RedSun - TieringEngineService.exe from Non-Standard Path
+// =============================================================================
+// Rule ID:        T3-5
+// Exploit:        RedSun
+// Severity:       High
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 6 hours
+// Auto-Response:  Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+DeviceFileEvents
+| where FileName =~ "TieringEngineService.exe"
+| where ActionType in ("FileCreated", "FileModified")
+| where FolderPath !startswith @"C:\Windows\System32\"
+| where FolderPath !startswith @"C:\Windows\WinSxS\"
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          ActionType, FileName, FolderPath, SHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName

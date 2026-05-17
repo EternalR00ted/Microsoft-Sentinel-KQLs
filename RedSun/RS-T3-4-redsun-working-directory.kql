@@ -1,0 +1,20 @@
+// =============================================================================
+// RedSun - PoC RS-GUID Working Directory in User Temp
+// =============================================================================
+// Rule ID:        T3-4
+// Exploit:        RedSun
+// Severity:       High
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 3 hours
+// Auto-Response:  Collect investigation package
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+DeviceFileEvents
+| where FolderPath matches regex @"\\AppData\\Local\\Temp\\RS-[0-9a-fA-F\-{}]+\\"
+| where ActionType == "FileCreated"
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          FileName, FolderPath, SHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName

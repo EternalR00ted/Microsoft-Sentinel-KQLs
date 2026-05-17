@@ -1,0 +1,22 @@
+// =============================================================================
+// RedSun - Defender Engine Arbitrary File Write to System32
+// =============================================================================
+// Rule ID:        T2-1
+// Exploit:        RedSun
+// Severity:       Critical
+// Category:       Privilege Escalation
+// MITRE ATT&CK:   T1068
+// Frequency:      Every 1 hour
+// Auto-Response:  Isolate device + Run AV scan + Initiate investigation
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+DeviceFileEvents
+| where InitiatingProcessFileName =~ "MsMpEng.exe"
+| where FolderPath startswith @"C:\Windows\System32\"
+| where ActionType in ("FileCreated", "FileModified")
+| where FileName endswith ".exe" or FileName endswith ".dll" or FileName endswith ".sys"
+| project Timestamp, DeviceId, ReportId, DeviceName, ActionType,
+          FileName, FolderPath, SHA256,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName

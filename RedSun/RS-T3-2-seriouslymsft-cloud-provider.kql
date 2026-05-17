@@ -1,0 +1,23 @@
+// =============================================================================
+// RedSun - SERIOUSLYMSFT Cloud Files Sync Root Registration
+// =============================================================================
+// Rule ID:        T3-2
+// Exploit:        RedSun
+// Severity:       Critical
+// Category:       ?
+// MITRE ATT&CK:   ?
+// Frequency:      Every 3 hours
+// Auto-Response:  Isolate device
+// Deploy As:      Defender XDR Custom Detection Rule
+// =============================================================================
+
+DeviceRegistryEvents
+| where RegistryKey has @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager"
+| where ActionType in ("RegistryKeyCreated", "RegistryValueSet")
+| where RegistryValueData has "SERIOUSLYMSFT"
+    or RegistryKey has "SERIOUSLYMSFT"
+    or RegistryValueName has "SERIOUSLYMSFT"
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          RegistryKey, RegistryValueName, RegistryValueData, ActionType,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName
