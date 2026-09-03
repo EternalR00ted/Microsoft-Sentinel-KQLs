@@ -1,0 +1,17 @@
+// MDE Live Response usage - alert on any actor (portal or API)
+// Data path: MDE audit -> Unified Audit Log -> Defender for Cloud Apps -> CloudAppEvents
+CloudAppEvents
+| where tostring(RawEventData.Workload) =~ "MicrosoftDefenderForEndpoint"
+| where ActionType contains "LiveResponse"
+| extend
+    ActorUpn       = tostring(RawEventData.UserId),
+    ActorIp        = iff(isempty(IPAddress), tostring(RawEventData.ClientIP), IPAddress),
+    DeviceName     = tostring(RawEventData.DeviceName),
+    DeviceId       = tostring(RawEventData.DeviceId),
+    FileName       = tostring(RawEventData.FileName),
+    FileSHA256     = tostring(RawEventData.FileSHA256),
+    CommandsString = tostring(RawEventData.CommandsString)
+| project Timestamp, ReportId, ActionType, ActorUpn, AccountDisplayName, AccountObjectId, AccountType,
+          ActorIp, CountryCode, DeviceName, DeviceId, FileName, FileSHA256, CommandsString,
+          AuditDetails = RawEventData
+| sort by Timestamp desc
