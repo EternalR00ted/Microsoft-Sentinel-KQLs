@@ -1,0 +1,40 @@
+// Defender signatures not updating
+//
+// Fires when a device has been online all day but its newest Defender signatures are more
+// than 3 days old. UnDefend can block signature updates as a standard user, and the
+// console can keep showing the device as healthy. So this checks the signature's own
+// publish time. It doesn't trust the device's up to date flag.
+//
+// Runs:      Every 24 hours
+// Severity:  Medium
+// MITRE:     T1562.001
+// Tables:    DeviceTvmInfoGathering, DeviceProcessEvents
+// Custom details: SignatureVersion
+//
+// Needs:
+//   - Defender for Endpoint P2 for the TVM tables.
+//   - Clean up devices that are already stale before you turn it on, or day one floods the
+//     queue.
+//
+// Triage (paste into Recommended actions):
+//   - Check if other devices on the same network are updating fine.
+//   - Look for alerts or odd processes on this device over the last week.
+//   - Escalate if this device is stuck and its neighbours aren't.
+//   - Close after the Intune "Update Windows Defender security intelligence" action works.
+//
+// Tune: StaleAfter at the top of the query.
+
+let StaleAfter = 3d;
+let Online = DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | summarize FirstSeen = min(Timestamp), (Timestamp, ReportId) = arg_max(Timestamp, ReportId) by DeviceId, DeviceName
+    | where FirstSeen < ago(12h) and Timestamp > ago(3h);
+DeviceTvmInfoGathering
+| summarize arg_max(Timestamp, AdditionalFields) by DeviceId
+| extend AF = parse_json(tostring(AdditionalFields))
+| extend SignatureVersion = tostring(AF.AvSignatureVersion),
+         SignatureTime = coalesce(todatetime(AF.AvSignaturePublishTime), todatetime(AF.AvSignatureUpdateTime))
+| where isnotempty(SignatureVersion) and SignatureTime < ago(StaleAfter)
+| project DeviceId, SignatureVersion, SignatureTime
+| join kind=inner Online on DeviceId
+| project Timestamp, ReportId, DeviceId, DeviceName, SignatureVersion, SignatureTime

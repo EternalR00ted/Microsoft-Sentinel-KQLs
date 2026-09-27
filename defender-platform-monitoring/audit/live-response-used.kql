@@ -1,0 +1,36 @@
+// Defender Live Response used
+//
+// Fires on any Live Response activity in the audit log. That covers portal sessions, file
+// downloads, API sessions and library uploads. Live Response can run scripts on a device
+// as SYSTEM, so every use should have a reason behind it.
+//
+// Runs:      Continuous (NRT)
+// Severity:  Medium
+// MITRE:     T1059.001, T1005, T1219
+// Tables:    CloudAppEvents
+// Custom details: ActionType, ActorUpn
+//
+// Needs:
+//   - The Defender for Cloud Apps Microsoft 365 connector with Microsoft 365 activities
+//     turned on.
+//   - Audit events can take tens of minutes to show up.
+//
+// Heads up: read-only commands in a portal session might not create an audit event.
+//
+// Triage (paste into Recommended actions):
+//   - Check who ran it, on which device, and what they did.
+//   - Escalate if there's no ticket or incident behind it.
+//   - Close if it's part of an open investigation.
+
+CloudAppEvents
+| where ingestion_time() > ago(1d)
+| where tostring(RawEventData.Workload) =~ "MicrosoftDefenderForEndpoint"
+| where ActionType contains "LiveResponse"
+| extend ActorUpn = tostring(RawEventData.UserId),
+         ActorIp = iff(isempty(IPAddress), tostring(RawEventData.ClientIP), IPAddress),
+         DeviceName = tostring(RawEventData.DeviceName),
+         DeviceId = tostring(RawEventData.DeviceId),
+         FileName = tostring(RawEventData.FileName),
+         FileSHA256 = tostring(RawEventData.FileSHA256),
+         CommandsString = tostring(RawEventData.CommandsString)
+| project Timestamp, ReportId, ActionType, ActorUpn, AccountDisplayName, AccountObjectId, AccountType, ActorIp, CountryCode, DeviceName, DeviceId, FileName, FileSHA256, CommandsString, AuditDetails = RawEventData

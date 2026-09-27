@@ -1,0 +1,29 @@
+// Server stopped reporting to Defender
+//
+// Fires when a server that was sending process telemetry goes quiet for 4 hours. That's
+// what an EDR killer looks like from the console.
+//
+// Runs:      Every 3 hours
+// Severity:  High
+// MITRE:     T1562.001, T1562.006
+// Tables:    DeviceProcessEvents
+// Custom details: LastTelemetry
+//
+// Needs:
+//   - Scope the rule to a server device group. Laptops go offline all the time and will
+//     spam you.
+//
+// Triage (paste into Recommended actions):
+//   - Check if the server is actually up, and if there's planned maintenance.
+//   - Escalate right away if the server is up but silent.
+//   - Close if it's a planned outage or it was decommissioned.
+//
+// Tune: SilentFor at the top of the query.
+
+let SilentFor = 4h;
+DeviceProcessEvents
+| where Timestamp > ago(12h)
+| summarize (Timestamp, ReportId) = arg_max(Timestamp, ReportId) by DeviceId, DeviceName
+| where Timestamp < ago(SilentFor)
+| extend LastTelemetry = Timestamp
+| project Timestamp, ReportId, DeviceId, DeviceName, LastTelemetry

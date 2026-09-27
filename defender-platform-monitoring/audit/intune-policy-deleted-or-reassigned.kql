@@ -1,0 +1,29 @@
+// Intune policy deleted or reassigned
+//
+// Fires when an Intune policy gets deleted or its assignment changes. Deleting or
+// unassigning an AV or ASR policy is one of the quietest ways to weaken every device at
+// once.
+//
+// Runs:      Every hour
+// Severity:  Low
+// MITRE:     T1562.001
+// Tables:    IntuneAuditLogs (Sentinel)
+// Custom details: Actor, Target
+//
+// Needs:
+//   - Intune diagnostic settings sending audit logs to your Sentinel workspace, with the
+//     workspace connected to the Defender portal.
+//   - Microsoft Sentinel Contributor to create it.
+//   - Map the account entity to the Actor column yourself. Sentinel data doesn't map on
+//     its own.
+//
+// Triage (paste into Recommended actions):
+//   - Check if it's an AV, ASR, EDR, firewall or baseline policy, and if there's a ticket.
+//   - Escalate if a security policy got deleted or unassigned with no ticket.
+//   - Close if it's a ticketed change.
+
+IntuneAuditLogs
+| where OperationName contains "Delete" or OperationName contains "Assign"
+| extend Props = parse_json(Properties)
+| extend Actor = coalesce(tostring(Props.Actor.UPN), Identity), Target = tostring(Props.TargetDisplayNames[0])
+| project TimeGenerated, Actor, OperationName, Category, Target, ResultType, CorrelationId

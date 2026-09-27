@@ -1,0 +1,29 @@
+// App granted Defender API permissions
+//
+// Fires when an app gets permissions on the Defender for Endpoint API. Some of those
+// permissions can run Live Response or isolate any device, so treat it like someone adding
+// an admin.
+//
+// Runs:      Continuous (NRT)
+// Severity:  High
+// MITRE:     T1098
+// Tables:    CloudAppEvents
+//
+// Needs:
+//   - The Defender for Cloud Apps Microsoft 365 connector with Microsoft 365 activities
+//     turned on.
+//   - Entra events show up in CloudAppEvents with a trailing dot on the action name, which
+//     is why the query matches on the start of it.
+//
+// Triage (paste into Recommended actions):
+//   - Check which app, which permission (AppRole.Value in RawEventData), who granted it,
+//     and the ticket.
+//   - Escalate if there's no ticket, or the permission covers Live Response, isolation or
+//     indicators.
+//   - Close if it's a ticketed integration. Write down the app and its owner.
+
+CloudAppEvents
+| where ingestion_time() > ago(1d)
+| where ActionType startswith "Add app role assignment to service principal"
+| where tostring(RawEventData) contains "fc780465-2017-40d4-a0c5-307022471b92" or tostring(RawEventData) has "WindowsDefenderATP"
+| project Timestamp, ReportId, AccountObjectId, AccountDisplayName, IPAddress, ActionType, RawEventData

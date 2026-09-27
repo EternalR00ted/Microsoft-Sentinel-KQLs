@@ -1,0 +1,25 @@
+// Driver loaded from user or temp folder
+//
+// Fires when a kernel driver loads from a folder regular users can write to, like Users,
+// Temp or ProgramData. Legit drivers load from System32\drivers or the driver store.
+//
+// Runs:      Continuous (NRT)
+// Severity:  Medium
+// MITRE:     T1068, T1562.001
+// Tables:    DeviceEvents
+// Custom details: FileName, FolderPath
+//
+// Needs:
+//   - Run it over 30 days in Advanced hunting first. ProgramData can have legit vendor
+//     drivers in it.
+//
+// Triage (paste into Recommended actions):
+//   - Check the file page for prevalence and signer, and the process that loaded it.
+//   - Escalate if the driver or the loader is unknown.
+//   - Close if it's known software, then exclude that SHA1 in the query.
+
+DeviceEvents
+| where ingestion_time() > ago(1d)
+| where ActionType == "DriverLoad"
+| where FolderPath contains "\\Users\\" or FolderPath contains "\\Temp\\" or FolderPath contains "\\ProgramData\\" or FolderPath contains "\\PerfLogs\\" or FolderPath contains "$Recycle.Bin"
+| project Timestamp, ReportId, DeviceId, DeviceName, FileName, FolderPath, SHA1, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName

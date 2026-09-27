@@ -1,0 +1,41 @@
+// Defender protection off
+//
+// Fires when tamper protection, real-time protection, cloud protection or behaviour
+// monitoring is off on a device that's online. Devices where the antivirus isn't active at
+// all are left to "Defender antivirus not active", so one problem only makes one alert.
+//
+// Runs:      Every 24 hours
+// Severity:  High
+// MITRE:     T1562.001
+// Tables:    DeviceTvmSecureConfigurationAssessment, DeviceTvmInfoGathering, DeviceProcessEvents
+// Custom details: ConfigurationId, ConfigurationName
+//
+// Needs:
+//   - Defender for Endpoint P2 for the TVM tables.
+//   - Clean up the backlog before you turn it on.
+//
+// Triage (paste into Recommended actions):
+//   - Open the device's Effective settings and see where the value comes from.
+//   - Check the device's policy status in Intune.
+//   - Escalate if the setting was changed locally, or it flipped with no policy change.
+//   - Close once the policy conflict is fixed.
+//
+// Based on: Jeffrey Appel's scid list, https://jeffreyappel.nl/how-to-check-for-a-healthy-defender-for-endpoint-environment/
+
+let Online = DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | summarize (Timestamp, ReportId) = arg_max(Timestamp, ReportId) by DeviceId, DeviceName;
+let AvNotActive = DeviceTvmInfoGathering
+    | summarize arg_max(Timestamp, AdditionalFields) by DeviceId
+    | extend AvModeRaw = tostring(parse_json(tostring(AdditionalFields)).AvMode)
+    | where isnotempty(AvModeRaw) and AvModeRaw != "0"
+    | project DeviceId;
+DeviceTvmSecureConfigurationAssessment
+| where ConfigurationId in ("scid-2003", "scid-2012", "scid-2016", "scid-91")
+| summarize arg_max(Timestamp, IsCompliant, IsApplicable) by DeviceId, ConfigurationId
+| where IsApplicable == 1 and IsCompliant == 0
+| where DeviceId !in (AvNotActive)
+| join kind=leftouter (DeviceTvmSecureConfigurationAssessmentKB | project ConfigurationId, ConfigurationName) on ConfigurationId
+| project DeviceId, ConfigurationId, ConfigurationName
+| join kind=inner Online on DeviceId
+| project Timestamp, ReportId, DeviceId, DeviceName, ConfigurationId, ConfigurationName
