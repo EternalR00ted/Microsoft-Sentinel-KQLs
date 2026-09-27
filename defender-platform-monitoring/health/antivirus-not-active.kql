@@ -1,0 +1,43 @@
+// Defender antivirus not active
+//
+// Fires when Defender Antivirus is passive, disabled or in EDR block mode on a device
+// that's online. If Defender is your only AV, that shouldn't happen. UnDefend's aggressive
+// mode can switch Defender off during a platform update.
+//
+// Runs:      Every 24 hours
+// Severity:  High
+// MITRE:     T1562.001
+// Tables:    DeviceTvmInfoGathering, DeviceInfo, DeviceProcessEvents
+// Custom details: AvMode
+//
+// Needs:
+//   - Defender for Endpoint P2 for the TVM tables.
+//   - Tag any device that's passive on purpose with the ExceptionTag value and the rule
+//     skips it.
+//
+// Triage (paste into Recommended actions):
+//   - Check for new software installs and recent policy changes.
+//   - Look for other alerts on the device.
+//   - Escalate if there's no explanation within an hour.
+//   - Close if it's an approved exception, then tag the device.
+//
+// Tune: ExceptionTag at the top of the query.
+
+let ExceptionTag = "AV-Passive-Approved";
+let Online = DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | summarize (Timestamp, ReportId) = arg_max(Timestamp, ReportId) by DeviceId, DeviceName;
+let Approved = DeviceInfo
+    | where Timestamp > ago(7d)
+    | summarize arg_max(Timestamp, DeviceManualTags) by DeviceId
+    | where DeviceManualTags contains ExceptionTag
+    | project DeviceId;
+DeviceTvmInfoGathering
+| summarize arg_max(Timestamp, AdditionalFields) by DeviceId
+| extend AvModeRaw = tostring(parse_json(tostring(AdditionalFields)).AvMode)
+| where isnotempty(AvModeRaw) and AvModeRaw != "0"
+| where DeviceId !in (Approved)
+| extend AvMode = case(AvModeRaw == "1", "Passive", AvModeRaw == "2", "Disabled", AvModeRaw == "4", "EDR Block", AvModeRaw == "5", "PassiveAudit", strcat("Other ", AvModeRaw))
+| project DeviceId, AvMode
+| join kind=inner Online on DeviceId
+| project Timestamp, ReportId, DeviceId, DeviceName, AvMode

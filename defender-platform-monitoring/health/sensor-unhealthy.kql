@@ -1,0 +1,28 @@
+// Defender sensor unhealthy
+//
+// Fires when a device's Defender sensor is sending partial data or can't take response
+// actions. In the portal that shows up as No sensor data or Impaired communications.
+// Inactive devices are skipped, since those are usually just turned off.
+//
+// Runs:      Every 24 hours
+// Severity:  Medium
+// MITRE:     T1562.006
+// Tables:    DeviceInfo
+// Custom details: SensorHealthState
+//
+// Needs:
+//   - Nothing beyond Defender for Endpoint.
+//
+// Triage (paste into Recommended actions):
+//   - Check the proxy and firewall path to Defender, and the device's EDR status in
+//     Intune.
+//   - Escalate if it's a server or a critical asset, or there are other alerts on the
+//     device.
+//   - Close once the sensor is back to Active.
+
+DeviceInfo
+| where Timestamp > ago(1d)
+| summarize arg_max(Timestamp, ReportId, DeviceName, SensorHealthState, OnboardingStatus) by DeviceId
+| where OnboardingStatus == "Onboarded" and isnotempty(SensorHealthState)
+| where SensorHealthState !in~ ("Active", "Inactive")
+| project Timestamp, ReportId, DeviceId, DeviceName, SensorHealthState

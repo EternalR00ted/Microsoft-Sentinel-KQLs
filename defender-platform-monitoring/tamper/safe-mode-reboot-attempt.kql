@@ -1,0 +1,27 @@
+// Safe Mode reboot attempt
+//
+// Fires when ASR catches something trying to reboot the machine into Safe Mode. Security
+// tools don't run in Safe Mode, and ransomware crews use it to get around them. ASR
+// doesn't raise an alert for this on its own.
+//
+// Runs:      Continuous (NRT)
+// Severity:  High
+// MITRE:     T1688
+// Tables:    DeviceEvents
+// Custom details: ActionType
+//
+// Needs:
+//   - The ASR rule "Block rebooting machine in Safe Mode" in Audit or Block. If it isn't,
+//     "Safe Mode boot set with bcdedit" still covers you.
+//
+// Triage (paste into Recommended actions):
+//   - Check the command line and the account.
+//   - Escalate unless IT is fixing the device under a ticket.
+//   - Close if it's ticketed repair work.
+//
+// Based on: Microsoft's ASR rules reference, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference
+
+DeviceEvents
+| where ingestion_time() > ago(1d)
+| where ActionType in ("AsrSafeModeRebootBlocked", "AsrSafeModeRebootedAudited", "AsrSafeModeRebootWarnBypassed")
+| project Timestamp, ReportId, DeviceId, DeviceName, ActionType, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName

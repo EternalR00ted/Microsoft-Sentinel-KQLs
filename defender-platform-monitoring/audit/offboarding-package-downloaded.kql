@@ -1,0 +1,25 @@
+// Defender offboarding package downloaded
+//
+// Fires when someone downloads the Defender offboarding package. That package removes
+// Defender from devices.
+//
+// Runs:      Continuous (NRT)
+// Severity:  High
+// MITRE:     T1562.001
+// Tables:    CloudAppEvents
+//
+// Needs:
+//   - The Defender for Cloud Apps Microsoft 365 connector with Microsoft 365 activities
+//     turned on.
+//
+// Triage (paste into Recommended actions):
+//   - Check who downloaded it, from which IP, and if a change ticket covers it.
+//   - Confirm with the person out of band.
+//   - Escalate as an incident if there's no ticket.
+//
+// Based on: Bert-Jan Pals' query, https://github.com/Bert-JanP/Hunting-Queries-Detection-Rules/blob/main/Defender%20XDR/OffboardingPackageDownloaded.md
+
+CloudAppEvents
+| where ingestion_time() > ago(1d)
+| where ActionType == "DownloadOffboardingPkg"
+| project Timestamp, ReportId, AccountObjectId, AccountDisplayName, IPAddress, ActionType

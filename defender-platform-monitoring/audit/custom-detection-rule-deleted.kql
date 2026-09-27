@@ -1,0 +1,27 @@
+// Custom detection rule deleted
+//
+// Fires when someone deletes a custom detection rule. Deleting detections is a cheap way
+// to blind a SOC.
+//
+// Runs:      Continuous (NRT)
+// Severity:  Medium
+// MITRE:     T1562.001
+// Tables:    CloudAppEvents
+// Custom details: RuleName
+//
+// Needs:
+//   - The Defender for Cloud Apps Microsoft 365 connector with Microsoft 365 activities
+//     turned on.
+//
+// Triage (paste into Recommended actions):
+//   - Check who deleted it, which rule, and the ticket.
+//   - Escalate if there's no ticket, or it's one of the rules in this folder.
+//   - Close if it's a ticketed cleanup.
+//
+// Based on: Bert-Jan Pals' post, https://kqlquery.com/posts/audit-defender-xdr/
+
+CloudAppEvents
+| where ingestion_time() > ago(1d)
+| where ActionType == "DeleteCustomDetection"
+| extend RuleName = tostring(RawEventData.RuleName)
+| project Timestamp, ReportId, AccountObjectId, AccountDisplayName, IPAddress, RuleName

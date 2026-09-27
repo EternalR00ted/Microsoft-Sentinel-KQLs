@@ -1,0 +1,28 @@
+// Defender advanced feature changed
+//
+// Fires when someone changes a Defender advanced feature in the portal. These are tenant-
+// wide switches like tamper protection and EDR in block mode.
+//
+// Runs:      Continuous (NRT)
+// Severity:  Medium
+// MITRE:     T1562.001
+// Tables:    CloudAppEvents
+// Custom details: Setting, NewValue
+//
+// Needs:
+//   - The Defender for Cloud Apps Microsoft 365 connector with Microsoft 365 activities
+//     turned on.
+//
+// Triage (paste into Recommended actions):
+//   - Check which setting changed, the new value, who did it, and the ticket.
+//   - Escalate if tamper protection, EDR in block mode or custom network indicators got
+//     turned off, or Live Response unsigned scripts got turned on, with no ticket.
+//   - Close if it's a ticketed change.
+//
+// Based on: Jeffrey Appel's post, https://jeffreyappel.nl/auditing-microsoft-defender-and-intune-configuration-changes/
+
+CloudAppEvents
+| where ingestion_time() > ago(1d)
+| where ActionType == "SetAdvancedFeatures"
+| extend Setting = tostring(RawEventData.SettingName), NewValue = tostring(RawEventData.SettingsNewValue)
+| project Timestamp, ReportId, AccountObjectId, AccountDisplayName, IPAddress, Setting, NewValue

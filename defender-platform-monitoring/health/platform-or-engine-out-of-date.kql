@@ -1,0 +1,38 @@
+// Defender platform or engine out of date
+//
+// Fires when Defender says its platform or engine is out of date and it hasn't updated in
+// 7 days. Fixes for Defender's own bugs ship this way. BlueHammer's fix was a platform
+// update.
+//
+// Runs:      Every 24 hours
+// Severity:  Low
+// MITRE:     T1562.001
+// Tables:    DeviceTvmInfoGathering, DeviceProcessEvents
+// Custom details: PlatformVersion, EngineVersion
+//
+// Needs:
+//   - Defender for Endpoint P2 for the TVM tables.
+//   - Pairs well with the Intune compliance setting for a minimum Defender version.
+//
+// Triage (paste into Recommended actions):
+//   - Check if it's one device or a bunch. A bunch means the update path is broken.
+//   - Escalate to engineering if it's a lot of devices.
+//   - Close once the device updates.
+//
+// Tune: BehindFor at the top of the query.
+
+let BehindFor = 7d;
+let Online = DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | summarize (Timestamp, ReportId) = arg_max(Timestamp, ReportId) by DeviceId, DeviceName;
+DeviceTvmInfoGathering
+| summarize arg_max(Timestamp, AdditionalFields) by DeviceId
+| extend AF = parse_json(tostring(AdditionalFields))
+| extend PlatformCurrent = coalesce(tostring(AF.AvIsPlatformUptodate), tostring(AF.AvIsPlatformUpToDate)),
+         EngineCurrent = coalesce(tostring(AF.AvIsEngineUptodate), tostring(AF.AvIsEngineUpToDate)),
+         PlatformVersion = tostring(AF.AvPlatformVersion), EngineVersion = tostring(AF.AvEngineVersion),
+         PlatformUpdated = todatetime(AF.AvPlatformUpdateTime), EngineUpdated = todatetime(AF.AvEngineUpdateTime)
+| where (PlatformCurrent =~ "False" and PlatformUpdated < ago(BehindFor)) or (EngineCurrent =~ "False" and EngineUpdated < ago(BehindFor))
+| project DeviceId, PlatformVersion, EngineVersion
+| join kind=inner Online on DeviceId
+| project Timestamp, ReportId, DeviceId, DeviceName, PlatformVersion, EngineVersion

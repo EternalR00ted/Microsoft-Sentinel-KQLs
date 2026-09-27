@@ -1,0 +1,25 @@
+// Safe Mode boot set with bcdedit
+//
+// Fires when bcdedit changes the Safe Mode boot setting. Works whether or not the ASR Safe
+// Mode rule is on. Setting it is the ransomware move. Clearing it right after a Safe Mode
+// session is the cleanup.
+//
+// Runs:      Continuous (NRT)
+// Severity:  High
+// MITRE:     T1688
+// Tables:    DeviceProcessEvents
+// Custom details: AccountName
+//
+// Needs:
+//   - Nothing beyond Defender for Endpoint.
+//
+// Triage (paste into Recommended actions):
+//   - Check the command line, the account, and whether the device rebooted after.
+//   - Escalate unless IT is fixing the device under a ticket.
+//   - Close if it's ticketed repair work.
+
+DeviceProcessEvents
+| where ingestion_time() > ago(1d)
+| where FileName =~ "bcdedit.exe" or ProcessVersionInfoOriginalFileName =~ "bcdedit.exe"
+| where ProcessCommandLine has "safeboot"
+| project Timestamp, ReportId, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine

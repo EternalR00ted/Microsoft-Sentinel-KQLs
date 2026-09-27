@@ -1,0 +1,27 @@
+// Defender troubleshooting mode turned on
+//
+// Fires when someone turns on troubleshooting mode on a device. That lifts tamper
+// protection for up to 4 hours.
+//
+// Runs:      Continuous (NRT)
+// Severity:  Medium
+// MITRE:     T1562.001
+// Tables:    DeviceEvents
+// Custom details: ChangeSource
+//
+// Needs:
+//   - Nothing beyond Defender for Endpoint.
+//
+// Triage (paste into Recommended actions):
+//   - Check for a ticket, and who turned it on.
+//   - Escalate if there's no ticket.
+//   - Close and link the ticket.
+//
+// Based on: Microsoft's troubleshooting mode docs, https://learn.microsoft.com/en-us/defender-endpoint/troubleshooting-mode-enable
+
+DeviceEvents
+| where ingestion_time() > ago(1d)
+| where ActionType == "AntivirusTroubleshootModeEvent"
+| extend ChangeReason = tostring(parse_json(AdditionalFields).TroubleshootingStateChangeReason), ChangeSource = tostring(parse_json(AdditionalFields).TroubleshootingStateChangeSource)
+| where ChangeReason contains "started"
+| project Timestamp, ReportId, DeviceId, DeviceName, ChangeReason, ChangeSource

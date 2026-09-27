@@ -1,0 +1,27 @@
+// Vulnerable driver dropped
+//
+// Fires when ASR catches a known vulnerable signed driver being written to disk. Blocked
+// means ASR stopped it. Audited means it went through. This is how a lot of EDR killers
+// get in, and ASR doesn't raise an alert for it on its own.
+//
+// Runs:      Continuous (NRT)
+// Severity:  High
+// MITRE:     T1068, T1562.001
+// Tables:    DeviceEvents
+// Custom details: ActionType, FileName
+//
+// Needs:
+//   - The ASR rule "Block abuse of exploited vulnerable signed drivers" in Audit or Block.
+//
+// Triage (paste into Recommended actions):
+//   - Check who dropped it and from where.
+//   - Escalate unless it's a documented hardware utility. Audited could be an EDR killer
+//     being staged, so Tier 2 decides on isolation.
+//   - Close if it's a documented utility, and ask the owner to remove it.
+//
+// Based on: Microsoft's ASR rules reference, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference
+
+DeviceEvents
+| where ingestion_time() > ago(1d)
+| where ActionType in ("AsrVulnerableSignedDriverBlocked", "AsrVulnerableSignedDriverAudited")
+| project Timestamp, ReportId, DeviceId, DeviceName, ActionType, FileName, FolderPath, SHA1, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
