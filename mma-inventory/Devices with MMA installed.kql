@@ -1,0 +1,16 @@
+// Devices with the Microsoft Monitoring Agent (MMA) installed
+// Run in: Defender portal > Advanced hunting. The TVM tables aren't in Sentinel, so it comes back empty there.
+// DefenderDependsOnMMA = true means the Defender sensor runs through MMA. Uninstalling MMA offboards that device.
+// Credit: the monitoring_agent software name and the 10.3720 sensor version split come from Alex Verboon's queries.
+let DefenderSensor = DeviceInfo
+    | where Timestamp > ago(30d)
+    | where isnotempty(ClientVersion)
+    | summarize arg_max(Timestamp, ClientVersion, OnboardingStatus) by DeviceId
+    | project DeviceId, DefenderSensorVersion = ClientVersion, OnboardingStatus;
+DeviceTvmSoftwareInventory
+| where SoftwareName == "monitoring_agent"
+| summarize by DeviceId, DeviceName, OSPlatform, SoftwareVendor, MMAVersion = SoftwareVersion
+| join kind=leftouter DefenderSensor on DeviceId
+| extend DefenderDependsOnMMA = DefenderSensorVersion startswith "10.3720"
+| project DeviceName, OSPlatform, MMAVersion, DefenderDependsOnMMA, DefenderSensorVersion, OnboardingStatus, SoftwareVendor, DeviceId
+| order by DefenderDependsOnMMA desc, DeviceName asc

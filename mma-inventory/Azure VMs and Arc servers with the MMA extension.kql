@@ -1,0 +1,9 @@
+// Azure VMs and Arc servers that still have the legacy Log Analytics agent (MMA) extension
+// Run in: Azure Resource Graph Explorer, scoped to every subscription you care about.
+// Matches on extension type because extension names vary. MSI installs on on-prem servers won't show up here.
+resources
+| where type in~ ("microsoft.compute/virtualmachines/extensions", "microsoft.hybridcompute/machines/extensions")
+| where tostring(properties.type) in~ ("MicrosoftMonitoringAgent", "OmsAgentForLinux")
+| extend Machine = tostring(split(id, "/")[8]), MachineKind = tostring(split(id, "/")[7])
+| project Machine, MachineKind, ExtensionName = name, ExtensionType = tostring(properties.type), Version = tostring(properties.typeHandlerVersion), State = tostring(properties.provisioningState), resourceGroup, subscriptionId
+| order by Machine asc
