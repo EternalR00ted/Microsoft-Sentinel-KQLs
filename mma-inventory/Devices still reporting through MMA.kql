@@ -1,0 +1,21 @@
+// Devices still sending Heartbeat through the Microsoft Monitoring Agent (MMA), and whether AMA is also on the box
+// Run in: Sentinel or Log Analytics. Also runs in Defender Advanced hunting if the workspace is onboarded to the Defender portal.
+// An empty result doesn't mean you're clean. MMA uploads can stop at any time after March 2, 2026.
+// Raise Lookback to your workspace retention to see when each box last got through.
+// Credit: the MMA vs AMA status idea comes from the Azure Landing Zones AMA migration guidance.
+let Lookback = 30d;
+Heartbeat
+| where TimeGenerated > ago(Lookback)
+| extend Host = tolower(tostring(split(Computer, ".")[0]))
+| summarize
+    MMALastHeartbeat = maxif(TimeGenerated, Category in ("Direct Agent", "SCOM Agent", "SCOM Management Server")),
+    AMALastHeartbeat = maxif(TimeGenerated, Category == "Azure Monitor Agent"),
+    MMAVersion = take_anyif(Version, Category in ("Direct Agent", "SCOM Agent", "SCOM Management Server")),
+    OSType = take_any(OSType),
+    Environment = take_any(ComputerEnvironment),
+    ReportedNames = make_set(Computer)
+    by Host
+| where isnotnull(MMALastHeartbeat)
+| extend Status = iff(isnotnull(AMALastHeartbeat), "MMA and AMA both reporting", "MMA only")
+| project Host, Status, MMALastHeartbeat, AMALastHeartbeat, MMAVersion, OSType, Environment, ReportedNames
+| order by Status desc, MMALastHeartbeat desc
