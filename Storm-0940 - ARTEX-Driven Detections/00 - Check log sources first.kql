@@ -1,0 +1,48 @@
+// Check log sources first
+//
+// Run this once in Advanced hunting or Sentinel Logs before you turn on any rule in this folder.
+// Every rule reads one or more of these tables. A table with 0 rows means the rules that use it can never fire.
+//
+// The two that are most often missing are AADServicePrincipalSignInLogs and MicrosoftGraphActivityLogs.
+// Both are categories on the Entra ID diagnostic setting (ServicePrincipalSignInLogs, MicrosoftGraphActivityLogs)
+// that has to point at the Sentinel workspace. Graph activity logs need Entra ID P1 or P2 (E5 has P2).
+// Microsoft's own estimate for Graph activity logs is about 15 GiB a month per 1,000 users.
+//
+// The extra columns check that the fields the rules lean on are filled in:
+//   SpnRowsWithAsn          app sign-ins with an ASN (rule 2 uses it to define "network")
+//   SecretSignInsWithKeyId  secret sign-ins that log a key ID (rule 9 needs it for secrets, compare with SecretSignIns)
+//   AppOnlyGraphRows        Graph calls made with app-only tokens (rules 3 and 4 only look at these)
+//   MailItemsAccessedRows   mailbox read audit records (rule 10)
+let RulesByTable = datatable(TableName: string, UsedBy: string)
+[
+    "SigninLogs", "Password spray from one source",
+    "AADNonInteractiveUserSignInLogs", "Password spray from one source",
+    "AADServicePrincipalSignInLogs", "App signed in from a new network | Planted app credential used to sign in",
+    "AuditLogs", "App assigned an admin role | App added credentials to an app | App granted API permissions | App changed the directory in a new way | Planted app credential used to sign in",
+    "MicrosoftGraphActivityLogs", "App made unusual Graph calls | App token has new high-risk permissions",
+    "OfficeActivity", "App reading many mailboxes"
+];
+union withsource = TableName isfuzzy = true
+    SigninLogs, AADNonInteractiveUserSignInLogs, AADServicePrincipalSignInLogs, AuditLogs, MicrosoftGraphActivityLogs, OfficeActivity
+| where TimeGenerated > ago(7d)
+| summarize
+    Rows = count(),
+    Newest = max(TimeGenerated),
+    SpnRowsWithAsn = countif(TableName == "AADServicePrincipalSignInLogs" and isnotempty(tostring(column_ifexists("AutonomousSystemNumber", "")))),
+    SecretSignIns = countif(TableName == "AADServicePrincipalSignInLogs" and tostring(column_ifexists("ClientCredentialType", "")) =~ "clientSecret"),
+    SecretSignInsWithKeyId = countif(TableName == "AADServicePrincipalSignInLogs" and tostring(column_ifexists("ClientCredentialType", "")) =~ "clientSecret" and isnotempty(tostring(column_ifexists("ServicePrincipalCredentialKeyId", "")))),
+    AppOnlyGraphRows = countif(TableName == "MicrosoftGraphActivityLogs" and isempty(tostring(column_ifexists("UserId", ""))) and isnotempty(tostring(column_ifexists("ServicePrincipalId", "")))),
+    MailItemsAccessedRows = countif(TableName == "OfficeActivity" and tostring(column_ifexists("Operation", "")) == "MailItemsAccessed")
+    by TableName
+| join kind = rightouter RulesByTable on TableName
+| project
+    TableName = TableName1,
+    Rows = coalesce(Rows, tolong(0)),
+    Newest,
+    SpnRowsWithAsn,
+    SecretSignIns,
+    SecretSignInsWithKeyId,
+    AppOnlyGraphRows,
+    MailItemsAccessedRows,
+    UsedBy
+| order by Rows asc

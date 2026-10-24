@@ -1,0 +1,109 @@
+// App changed the directory in a new way
+// Alert title: <Company> - Entra ID - {{InitiatorApp}} made directory changes it has never made before
+//
+// What it catches
+//   An application making a high-impact directory change it hasn't made in the last 14 days, or making directory
+//   changes with an HTTP client it has never used for writes. Huntress's advice for this campaign was that the
+//   combination of actor, operation and user agent is the signal: ConnectWise's own apps write with a .NET SDK user
+//   agent (kiota-dotnet), and the backdoor changes came from Python-urllib/3.12 (Huntress). Microsoft says to look
+//   for new apps, owners, consent grants, role assignments and changes to users, groups, authentication methods and
+//   Conditional Access (Microsoft, Oct 21 2026). This rule catches all of those without listing every operation:
+//   anything an app has never done before, in the categories below, is the alert.
+//
+// Rules 5, 6 and 7 in this folder are the fast, specific versions for roles, credentials and permission grants.
+// This one is the catch-all, so expect some overlap on those operations.
+//
+// Run this over 14 days once before you enable it, and add confirmed automation to ApprovedAutomation.
+//
+// Tables: AuditLogs
+// Run: every hour, look back 14 days. Severity: Severity column.
+// MITRE: T1098 Account Manipulation, T1556.009 Modify Authentication Process: Conditional Access Policies,
+//        T1484.002 Domain or Tenant Policy Modification: Trust Modification
+// Entities: Account (AadUserId) = InitiatorServicePrincipalId, OAuth application = InitiatorAppId
+let Lookback = 14d;
+let Window = 1h;
+let ApprovedAutomation = dynamic([]);  // display names of your own apps that make directory changes, once confirmed
+let AppChanges = AuditLogs
+    | where TimeGenerated > ago(Lookback)
+    | extend
+        InitiatorAppId = tostring(InitiatedBy.app.appId),
+        InitiatorServicePrincipalId = tostring(InitiatedBy.app.servicePrincipalId),
+        InitiatorApp = tostring(InitiatedBy.app.displayName),
+        InitiatorUserId = tostring(InitiatedBy.user.id)
+    | where (isnotempty(InitiatorServicePrincipalId) or isnotempty(InitiatorAppId)) and isempty(InitiatorUserId)
+    | where not(InitiatorApp in~ ("MS-PIM", "MS-PIM-Fairfax"))
+    | where not(InitiatorApp in~ (ApprovedAutomation))
+    | extend AppKey = coalesce(InitiatorServicePrincipalId, InitiatorAppId)
+    | extend TargetName = coalesce(tostring(TargetResources[0].userPrincipalName), tostring(TargetResources[0].displayName))
+    | extend IsRecent = ingestion_time() > ago(Window)
+    // mv-apply drops a row when the array is empty, so give empty arrays one placeholder element
+    | extend DetailsToRead = iff(array_length(AdditionalDetails) > 0, AdditionalDetails, dynamic([{"key": "none", "value": ""}]))
+    | mv-apply Detail = DetailsToRead on (
+        summarize UserAgent = take_anyif(tostring(Detail.value), tostring(Detail.key) =~ "User-Agent")
+        )
+    | extend UserAgentFamily = coalesce(tolower(extract(@"^([A-Za-z][A-Za-z0-9._-]*)", 1, UserAgent)), "(none)")
+    | project TimeGenerated, IsRecent, AppKey, InitiatorApp, InitiatorAppId, InitiatorServicePrincipalId, OperationName, Category, Result, UserAgent, UserAgentFamily, TargetName, CorrelationId;
+// Operations this app has never done before the window. High-impact ones: roles, credentials, permissions and
+// consent, owners, apps and service principals, domains and federation, Conditional Access and other policies,
+// auth methods and passwords, users and group membership, cross-tenant access
+let NewOpsByApp = AppChanges
+    | summarize InWindow = max(toint(IsRecent)), InHistory = max(toint(not(IsRecent))) by AppKey, OperationName
+    | where InWindow == 1 and InHistory == 0
+    | summarize
+        NewOperations = make_set(OperationName, 50),
+        NewHighImpactOperations = make_set_if(OperationName, OperationName matches regex @"(?i)(role|credential|certificates and secrets|app role assignment|permission grant|consent|owner|add application|update application|add service principal|update service principal|domain|federation|conditional access|named location|policy|security info|authentication method|password|add user|update user|delete user|add member to group|cross-tenant)", 50)
+        by AppKey;
+let NewClientsByApp = AppChanges
+    | summarize InWindow = max(toint(IsRecent)), InHistory = max(toint(not(IsRecent))) by AppKey, UserAgentFamily
+    | where InWindow == 1 and InHistory == 0
+    | summarize NewUserAgentFamilies = make_set(UserAgentFamily, 20) by AppKey;
+let HistoryByApp = AppChanges
+    | where not(IsRecent)
+    | summarize HistoryChanges = count() by AppKey;
+AppChanges
+| where IsRecent
+| summarize
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Changes = count(),
+    FailedChanges = countif(Result =~ "failure"),
+    InitiatorApp = take_any(InitiatorApp),
+    InitiatorAppId = take_any(InitiatorAppId),
+    InitiatorServicePrincipalId = take_any(InitiatorServicePrincipalId),
+    Operations = make_set(OperationName, 50),
+    Targets = make_set(TargetName, 25),
+    UserAgents = make_set(UserAgent, 10)
+    by AppKey
+| join kind = leftouter NewOpsByApp on AppKey
+| join kind = leftouter NewClientsByApp on AppKey
+| join kind = leftouter HistoryByApp on AppKey
+| extend
+    NewOperations = iff(isnull(NewOperations), dynamic([]), NewOperations),
+    NewHighImpactOperations = iff(isnull(NewHighImpactOperations), dynamic([]), NewHighImpactOperations),
+    NewUserAgentFamilies = iff(isnull(NewUserAgentFamilies), dynamic([]), NewUserAgentFamilies),
+    HistoryChanges = coalesce(HistoryChanges, tolong(0))
+| extend
+    NewHighImpactCount = array_length(NewHighImpactOperations),
+    NewClient = array_length(NewUserAgentFamilies) > 0 and HistoryChanges > 0,
+    FirstChangesIn14Days = HistoryChanges == 0
+| where NewHighImpactCount > 0 or NewClient
+| extend Severity = iff(NewHighImpactCount > 0 and (NewClient or FirstChangesIn14Days), "High", "Medium")
+| project
+    TimeGenerated = LastSeen,
+    Severity,
+    InitiatorApp,
+    InitiatorAppId,
+    InitiatorServicePrincipalId,
+    NewHighImpactOperations,
+    AllNewOperations = NewOperations,
+    NewUserAgentFamilies,
+    FirstChangesIn14Days,
+    Operations,
+    Changes,
+    FailedChanges,
+    Targets,
+    UserAgents,
+    HistoryChanges,
+    FirstSeen,
+    LastSeen
+| order by Severity asc

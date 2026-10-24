@@ -1,0 +1,89 @@
+// App token has new high-risk permissions
+// Alert title: <Company> - Graph - App {{AppId}} is using permissions it never had: {{NewPermissions}}
+//
+// What it catches
+//   An app-only Graph token that carries a high-risk application permission this app's tokens never carried in the
+//   last 14 days. It fires the first time the app uses the new access, however the permission got there: admin
+//   consent, a self-grant through AppRoleAssignment.ReadWrite.All, or a grant made from another compromised app.
+//   It doesn't depend on the audit log, so it still works if a grant was missed or happened before the window.
+//   Microsoft saw Storm-0940's agents go after identities, groups and privileged roles once they were in
+//   (Microsoft, Oct 21 2026). The token is where new access shows up first.
+//
+// The Roles column holds the application permissions in the token. Wids isn't used: Microsoft documents it for
+// user tokens and doesn't promise it for app-only tokens.
+//
+// Tables: MicrosoftGraphActivityLogs
+// Run: every hour, look back 14 days. Severity: Severity column.
+// MITRE: T1098.003 Account Manipulation: Additional Cloud Roles
+// Entities: OAuth application = AppId, Account (AadUserId) = ServicePrincipalId
+let Lookback = 14d;
+let Window = 1h;
+let MinHistoryDays = 3;
+let HighRiskPermissions = dynamic([
+    "RoleManagement.ReadWrite.Directory", "AppRoleAssignment.ReadWrite.All", "Application.ReadWrite.All",
+    "Application.ReadWrite.OwnedBy", "Directory.ReadWrite.All", "Directory.Read.All", "User.ReadWrite.All",
+    "Group.ReadWrite.All", "GroupMember.ReadWrite.All", "Policy.ReadWrite.ConditionalAccess",
+    "Policy.ReadWrite.AuthenticationMethod", "Policy.ReadWrite.PermissionGrant", "UserAuthenticationMethod.ReadWrite.All",
+    "Domain.ReadWrite.All", "Organization.ReadWrite.All", "RoleAssignmentSchedule.ReadWrite.Directory",
+    "RoleEligibilitySchedule.ReadWrite.Directory", "RoleManagementPolicy.ReadWrite.Directory",
+    "PrivilegedAccess.ReadWrite.AzureADGroup", "Mail.Read", "Mail.ReadWrite", "Mail.Send", "MailboxSettings.ReadWrite",
+    "Files.Read.All", "Files.ReadWrite.All", "Sites.Read.All", "Sites.ReadWrite.All", "Sites.Manage.All",
+    "Sites.FullControl.All", "Chat.Read.All", "Chat.ReadWrite.All", "ChannelMessage.Read.All",
+    "DeviceManagementConfiguration.ReadWrite.All", "DeviceManagementManagedDevices.PrivilegedOperations.All",
+    "DeviceManagementRBAC.ReadWrite.All", "DeviceManagementApps.ReadWrite.All"
+]);
+// These let an app make itself, or anything else, an admin. Any of them new on a token is High.
+let EscalationPermissions = dynamic([
+    "RoleManagement.ReadWrite.Directory", "AppRoleAssignment.ReadWrite.All", "Application.ReadWrite.All",
+    "Directory.ReadWrite.All", "Policy.ReadWrite.ConditionalAccess", "UserAuthenticationMethod.ReadWrite.All",
+    "Domain.ReadWrite.All", "RoleAssignmentSchedule.ReadWrite.Directory", "RoleEligibilitySchedule.ReadWrite.Directory"
+]);
+let AppHistory = MicrosoftGraphActivityLogs
+    | where TimeGenerated > ago(Lookback)
+    | where isempty(UserId) and isnotempty(ServicePrincipalId)
+    | where ingestion_time() <= ago(Window)
+    | summarize HistoryDays = dcount(bin(TimeGenerated, 1d)) by AppId;
+let RecentContext = MicrosoftGraphActivityLogs
+    | where ingestion_time() > ago(Window)
+    | where isempty(UserId) and isnotempty(ServicePrincipalId)
+    | summarize
+        Requests = count(),
+        IPAddresses = make_set(IPAddress, 20),
+        UserAgents = make_set(UserAgent, 10),
+        LastSeen = max(TimeGenerated)
+        by AppId;
+MicrosoftGraphActivityLogs
+| where TimeGenerated > ago(Lookback)
+| where isempty(UserId) and isnotempty(ServicePrincipalId) and isnotempty(Roles)
+| extend IsRecent = ingestion_time() > ago(Window)
+// The same Roles string repeats on every call, so collapse first and expand after
+| summarize FirstUsed = min(TimeGenerated) by AppId, ServicePrincipalId, Roles, IsRecent
+| extend Permission = extract_all(@"([A-Za-z]+(?:\.[A-Za-z]+)+)", Roles)
+| mv-expand Permission to typeof(string)
+| where Permission in (HighRiskPermissions)
+| summarize
+    InWindow = max(toint(IsRecent)),
+    InHistory = max(toint(not(IsRecent))),
+    FirstUsed = minif(FirstUsed, IsRecent)
+    by AppId, ServicePrincipalId, Permission
+| where InWindow == 1 and InHistory == 0
+| summarize
+    NewPermissions = make_set(Permission, 50),
+    FirstUsed = min(FirstUsed)
+    by AppId, ServicePrincipalId
+| join kind = inner AppHistory on AppId
+| where HistoryDays >= MinHistoryDays
+| join kind = leftouter RecentContext on AppId
+| extend Severity = iff(array_length(set_intersect(NewPermissions, EscalationPermissions)) > 0, "High", "Medium")
+| project
+    TimeGenerated = coalesce(LastSeen, FirstUsed),
+    AppId,
+    ServicePrincipalId,
+    Severity,
+    NewPermissions,
+    FirstUsed,
+    Requests,
+    IPAddresses,
+    UserAgents,
+    HistoryDays
+| order by Severity asc

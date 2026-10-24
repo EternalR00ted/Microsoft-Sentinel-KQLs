@@ -1,0 +1,142 @@
+// App signed in from a new network
+// Alert title: <Company> - Entra ID - {{ServicePrincipalName}} signed in from somewhere new
+//
+// What it catches
+//   An app (service principal) with two weeks of steady sign-ins suddenly signs in from a network it has never used,
+//   from a public IP when it has only ever used private or Microsoft-internal addresses, for APIs it has never asked
+//   for, or with a client or credential it has never used. That's what a stolen app credential looks like from the
+//   victim tenant. ConnectWise Cloud Backup normally signs in from Microsoft-internal IPv6 space. On Oct 15, 2026
+//   the stolen credential signed in from a hosting provider IPv4 address with a Python user agent (Huntress, Todyl).
+//   A later sweep asked for Exchange Online, SharePoint Online, Teams, Azure Resource Manager, Entra and the
+//   Office 365 Management APIs (Huntress). Nothing here is hardcoded: no IPs, app IDs or user agent strings.
+//
+// Scoring (alert at 2 or more, High at 3 or more)
+//   2  first public IP for an app whose history is all private or Microsoft-internal addresses
+//   2  a network (ASN, or /24 or /48 when there's no ASN) the app never used
+//   2  tokens for 2 or more APIs the app never asked for (1 point for a single new API)
+//   1  each: new user agent family, new credential type, new credential key, new country
+//
+// Blind spots: apps with under 3 days of history, and an attacker running in the same cloud ASN as the vendor.
+// The rules in this folder that watch what the app does after sign-in cover the second gap.
+//
+// Tables: AADServicePrincipalSignInLogs
+// Run: every hour, look back 14 days. Severity: Severity column.
+// MITRE: T1078.004 Valid Accounts: Cloud Accounts, T1199 Trusted Relationship
+// Entities: OAuth application = AppId, Account (AadUserId) = ServicePrincipalId, IP = IPAddresses
+let Lookback = 14d;        // match the rule's look back
+let Window = 1h;           // match how often the rule runs
+let MinHistoryDays = 3;    // skip apps with less history than this
+let MaxNetworks = 150;     // an app that already roams across this many networks can't be judged on "new network"
+let IsInternal = (ip: string) {
+    iff(isnotnull(parse_ipv4(ip)), ipv4_is_private(ip), ipv6_is_in_range(ip, "fc00::/7"))
+};
+let SignIns = AADServicePrincipalSignInLogs
+    | where TimeGenerated > ago(Lookback)
+    | extend Internal = IsInternal(IPAddress)
+    | extend Network = case(
+        Internal, "private or Microsoft-internal",
+        isnotempty(AutonomousSystemNumber) and AutonomousSystemNumber != "0", strcat("AS", AutonomousSystemNumber),
+        isnotnull(parse_ipv4(IPAddress)), format_ipv4_mask(IPAddress, 24),
+        strcat(parse_ipv6_mask(IPAddress, 48), "/48"))
+    | extend UserAgentFamily = coalesce(tolower(extract(@"^([A-Za-z][A-Za-z0-9._-]*)", 1, UserAgent)), "(none)")
+    | extend Country = coalesce(tostring(parse_json(LocationDetails).countryOrRegion), "(none)")
+    | extend CredentialType = coalesce(ClientCredentialType, "(none)")
+    | extend CredentialKey = coalesce(ServicePrincipalCredentialKeyId, "(none)")
+    | extend Resource = coalesce(ResourceDisplayName, ResourceIdentity, "(none)")
+    // Split on ingestion time, not event time, so late-arriving sign-ins are judged once and never count as history.
+    | extend IsRecent = ingestion_time() > ago(Window);
+let History = SignIns
+    | where not(IsRecent)
+    | summarize
+        HistoryDays = dcount(bin(TimeGenerated, 1d)),
+        HistNetworks = make_set(Network, 1000),
+        HistPublicSignIns = countif(not(Internal)),
+        HistUserAgentFamilies = make_set(UserAgentFamily, 200),
+        HistResources = make_set(Resource, 500),
+        HistCredentialTypes = make_set(CredentialType, 20),
+        HistCredentialKeys = make_set(CredentialKey, 200),
+        HistCountries = make_set(Country, 200)
+        by AppId;
+SignIns
+| where IsRecent
+| summarize
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    SignInCount = count(),
+    Successes = countif(ResultType == "0"),
+    Failures = countif(ResultType != "0"),
+    ServicePrincipalName = take_any(ServicePrincipalName),
+    ServicePrincipalId = take_any(ServicePrincipalId),
+    AppOwnerTenantId = take_any(AppOwnerTenantId),
+    HomeTenantId = take_any(AADTenantId),
+    IPAddresses = make_set(IPAddress, 20),
+    Networks = make_set(Network, 50),
+    PublicSignIns = countif(not(Internal)),
+    UserAgents = make_set(UserAgent, 10),
+    UserAgentFamilies = make_set(UserAgentFamily, 20),
+    Resources = make_set(Resource, 50),
+    CredentialTypes = make_set(CredentialType, 10),
+    CredentialKeys = make_set(CredentialKey, 20),
+    Countries = make_set(Country, 20),
+    ResultCodes = make_set(ResultType, 20)
+    by AppId
+| join kind = inner History on AppId
+| where HistoryDays >= MinHistoryDays
+| extend
+    NewNetworks = set_difference(Networks, HistNetworks),
+    NewUserAgentFamilies = set_difference(UserAgentFamilies, HistUserAgentFamilies),
+    NewResources = set_difference(Resources, HistResources),
+    NewCredentialTypes = set_difference(CredentialTypes, HistCredentialTypes),
+    NewCredentialKeys = set_difference(CredentialKeys, HistCredentialKeys),
+    NewCountries = set_difference(Countries, HistCountries)
+| extend
+    FirstPublicIp = HistPublicSignIns == 0 and PublicSignIns > 0,
+    NewNetwork = array_length(HistNetworks) < MaxNetworks and array_length(NewNetworks) > 0,
+    NewResourceCount = array_length(NewResources),
+    NewClient = array_length(NewUserAgentFamilies) > 0,
+    NewCredentialType = array_length(NewCredentialTypes) > 0,
+    NewCredentialKey = array_length(NewCredentialKeys) > 0,
+    NewCountry = array_length(NewCountries) > 0
+| extend Score =
+    iff(FirstPublicIp, 2, 0)
+    + iff(NewNetwork, 2, 0)
+    + case(NewResourceCount >= 2, 2, NewResourceCount == 1, 1, 0)
+    + iff(NewClient, 1, 0)
+    + iff(NewCredentialType, 1, 0)
+    + iff(NewCredentialKey, 1, 0)
+    + iff(NewCountry, 1, 0)
+| where Score >= 2
+| extend Reasons = array_concat(
+    iff(FirstPublicIp, pack_array("First sign-in from a public IP. Every earlier sign-in came from private or Microsoft-internal space."), dynamic([])),
+    iff(NewNetwork, pack_array(strcat("New network: ", strcat_array(NewNetworks, ", "))), dynamic([])),
+    iff(NewResourceCount > 0, pack_array(strcat("Tokens for APIs it never asked for: ", strcat_array(NewResources, ", "))), dynamic([])),
+    iff(NewClient, pack_array(strcat("New user agent family: ", strcat_array(NewUserAgentFamilies, ", "))), dynamic([])),
+    iff(NewCredentialType, pack_array(strcat("New credential type: ", strcat_array(NewCredentialTypes, ", "))), dynamic([])),
+    iff(NewCredentialKey, pack_array(strcat("New credential key: ", strcat_array(NewCredentialKeys, ", "))), dynamic([])),
+    iff(NewCountry, pack_array(strcat("New country: ", strcat_array(NewCountries, ", "))), dynamic([])))
+| extend
+    Severity = iff(Score >= 3, "High", "Medium"),
+    ThirdPartyApp = isnotempty(AppOwnerTenantId) and AppOwnerTenantId != HomeTenantId
+| project
+    TimeGenerated = LastSeen,
+    ServicePrincipalName,
+    AppId,
+    ServicePrincipalId,
+    ThirdPartyApp,
+    AppOwnerTenantId,
+    Severity,
+    Score,
+    Reasons,
+    IPAddresses,
+    Networks,
+    UserAgents,
+    Resources,
+    CredentialTypes,
+    SignInCount,
+    Successes,
+    Failures,
+    ResultCodes,
+    HistoryDays,
+    FirstSeen,
+    LastSeen
+| order by Score desc
