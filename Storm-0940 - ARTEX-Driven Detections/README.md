@@ -48,7 +48,7 @@ Microsoft's Sentinel rules "New access credential added to Application or Servic
 
 ## How these were checked
 
-Microsoft's Kusto parser couldn't be installed in the sandbox they were written in. Instead, every query was checked by script against the Microsoft Learn schemas for each table and the function list in Microsoft's Kusto.Language source: brackets and strings balanced, every column real, every function real, every operator real. Patterns that are easy to get wrong (audit log key parsing, PIM exclusion, Graph URI normalization) follow Microsoft's own Sentinel rules and docs. They haven't run against live data yet. Run each one in Advanced hunting before you save it as a rule.
+Under Testing
 
 ## Sources
 
