@@ -1,0 +1,96 @@
+// App granted API permissions
+// Alert title: <Company> - Entra ID - {{GrantedBy}} granted API permissions to {{GrantedToName}}
+//
+// What it catches
+//   An application granting API permissions (app role assignments, delegated grants or consent), to itself or to
+//   another app, and anyone granting a high-risk application permission. An app that holds
+//   AppRoleAssignment.ReadWrite.All can grant itself RoleManagement.ReadWrite.Directory and then make itself Global
+//   Administrator. Two of the Defender for Cloud Apps alerts Microsoft listed for this campaign are about exactly this:
+//   "Suspicious addition of app role assignments to service principal" and "Suspicious addition of application role
+//   assignments by service principal to itself" (Microsoft, Oct 21 2026).
+//
+// Human admin consent to normal permissions is left out. Human grants of high-risk permissions stay in, because
+// they're rare and an attacker with a stolen admin session does the same thing.
+// Run this over 14 days once before you enable it, and add confirmed automation to ApprovedGrantAutomation.
+//
+// Tables: AuditLogs
+// Run: every 5 minutes with Window = 5m if you can, otherwise hourly with Window = 1h. Severity: Severity column.
+// MITRE: T1098.003 Account Manipulation: Additional Cloud Roles
+// Entities: Account (AadUserId) = InitiatorServicePrincipalId and GrantedToId, OAuth application = InitiatorAppId
+let Window = 1h;
+let ApprovedGrantAutomation = dynamic([]);  // display names of your own apps that grant permissions, once confirmed
+let HighRiskPermissions = dynamic([
+    "RoleManagement.ReadWrite.Directory", "AppRoleAssignment.ReadWrite.All", "Application.ReadWrite.All",
+    "Application.ReadWrite.OwnedBy", "Directory.ReadWrite.All", "User.ReadWrite.All", "Group.ReadWrite.All",
+    "GroupMember.ReadWrite.All", "Policy.ReadWrite.ConditionalAccess", "Policy.ReadWrite.AuthenticationMethod",
+    "Policy.ReadWrite.PermissionGrant", "UserAuthenticationMethod.ReadWrite.All", "Domain.ReadWrite.All",
+    "Organization.ReadWrite.All", "RoleAssignmentSchedule.ReadWrite.Directory", "RoleEligibilitySchedule.ReadWrite.Directory",
+    "RoleManagementPolicy.ReadWrite.Directory", "PrivilegedAccess.ReadWrite.AzureADGroup", "Mail.Read", "Mail.ReadWrite",
+    "Mail.Send", "MailboxSettings.ReadWrite", "Files.Read.All", "Files.ReadWrite.All", "Sites.Read.All",
+    "Sites.ReadWrite.All", "Sites.Manage.All", "Sites.FullControl.All", "Chat.Read.All", "Chat.ReadWrite.All",
+    "ChannelMessage.Read.All", "DeviceManagementConfiguration.ReadWrite.All",
+    "DeviceManagementManagedDevices.PrivilegedOperations.All", "DeviceManagementRBAC.ReadWrite.All",
+    "DeviceManagementApps.ReadWrite.All"
+]);
+AuditLogs
+| where ingestion_time() > ago(Window)
+| where OperationName in~ ("Add app role assignment to service principal", "Add delegated permission grant", "Consent to application")
+| extend
+    InitiatorAppId = tostring(InitiatedBy.app.appId),
+    InitiatorServicePrincipalId = tostring(InitiatedBy.app.servicePrincipalId),
+    InitiatorApp = tostring(InitiatedBy.app.displayName),
+    InitiatorUserId = tostring(InitiatedBy.user.id),
+    InitiatorUpn = tostring(InitiatedBy.user.userPrincipalName)
+| extend InitiatedByApp = (isnotempty(InitiatorServicePrincipalId) or isnotempty(InitiatorAppId)) and isempty(InitiatorUserId)
+| where not(InitiatorApp in~ (ApprovedGrantAutomation))
+// The API (for example Microsoft Graph) on app role grants, the consented app on consent events
+| extend TargetObject = tostring(TargetResources[0].displayName)
+// mv-apply drops a row when the array is empty, so give empty arrays one placeholder element
+| extend
+    TargetsToRead = iff(array_length(TargetResources) > 0, TargetResources, dynamic([{"modifiedProperties": []}])),
+    DetailsToRead = iff(array_length(AdditionalDetails) > 0, AdditionalDetails, dynamic([{"key": "none", "value": ""}]))
+// Flatten every modified property across all targets into one bag: AppRole.Value, ServicePrincipal.ObjectID, and so on
+| mv-apply Target = TargetsToRead on (
+    mv-expand Prop = Target.modifiedProperties
+    | summarize Props = make_bag(bag_pack(tostring(Prop.displayName), trim(@'[\"\s]+', tostring(Prop.newValue))), 100)
+    )
+| extend
+    AppRoleValue = tostring(Props["AppRole.Value"]),
+    DelegatedScopes = tostring(Props["DelegatedPermissionGrant.Scope"]),
+    ConsentPermissions = tostring(Props["ConsentAction.Permissions"]),
+    GrantedToId = tostring(Props["ServicePrincipal.ObjectID"]),
+    GrantedToName = coalesce(tostring(Props["ServicePrincipal.DisplayName"]), TargetObject)
+| extend GrantedPermissions = extract_all(@"([A-Za-z]+(?:\.[A-Za-z]+)+)", strcat(AppRoleValue, " ", DelegatedScopes, " ", ConsentPermissions))
+| extend HighRiskGranted = set_intersect(GrantedPermissions, HighRiskPermissions)
+| extend HighRiskCount = array_length(HighRiskGranted)
+| extend SelfGrant = InitiatedByApp and isnotempty(GrantedToId) and GrantedToId == InitiatorServicePrincipalId
+| where InitiatedByApp or HighRiskCount > 0
+| mv-apply Detail = DetailsToRead on (
+    summarize UserAgent = take_anyif(tostring(Detail.value), tostring(Detail.key) =~ "User-Agent")
+    )
+| extend Severity = case(
+    InitiatedByApp and (SelfGrant or HighRiskCount > 0), "High",
+    InitiatedByApp, "Medium",
+    "Medium")
+| extend GrantedBy = coalesce(InitiatorApp, InitiatorUpn, InitiatorAppId)
+| project
+    TimeGenerated,
+    Severity,
+    GrantedBy,
+    OperationName,
+    Result,
+    InitiatedByApp,
+    SelfGrant,
+    InitiatorApp,
+    InitiatorAppId,
+    InitiatorServicePrincipalId,
+    InitiatorUpn,
+    GrantedToName,
+    GrantedToId,
+    TargetObject,
+    AppRoleValue,
+    DelegatedScopes,
+    HighRiskGranted,
+    UserAgent,
+    CorrelationId
+| order by TimeGenerated asc

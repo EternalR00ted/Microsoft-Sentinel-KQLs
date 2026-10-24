@@ -1,0 +1,132 @@
+// App made unusual Graph calls
+// Alert title: <Company> - Graph - App {{AppId}} is exploring Microsoft Graph
+//
+// What it catches
+//   An app-only identity that suddenly calls Graph endpoints it has never called, fails across lots of endpoints
+//   (400 bad request, 403 forbidden, 404 not found), gets throttled for the first time, or switches HTTP clients.
+//   Vendor code calls the same handful of endpoints every day. An AI agent driving a stolen app credential tries
+//   things, and a lot of them fail. Microsoft saw Storm-0940's ARTEX agents run Graph reconnaissance through the
+//   stolen ConnectWise app identities in several tenants (Microsoft, Oct 21 2026). Graph reads leave no Entra audit
+//   record, so this table is the only place that recon shows up (Huntress).
+//
+// Scoring (alert at 2 or more, High at 3 or more)
+//   2  calls to 5 or more endpoints this app never called in the last 14 days
+//   2  failures on 5 or more distinct endpoints, and more than double the app's worst hour in history
+//   1  a user agent family the app never used
+//   1  3 or more user agent families inside the window
+//   1  calls from a network the app never used
+//   1  throttled (429) when it never was before
+//
+// Endpoints are compared without IDs, using the same normalization Microsoft publishes for this table:
+//   GET /v1.0/users/{id}/memberOf becomes "GET users/memberof".
+//
+// Tables: MicrosoftGraphActivityLogs (Entra diagnostic setting, needs Entra ID P1 or P2)
+// Run: every hour, look back 14 days. Graph logs can land up to 2 hours late; the ingestion_time() split handles it.
+// MITRE: T1087.004 Cloud Account Discovery, T1069.003 Cloud Groups Discovery, T1526 Cloud Service Discovery
+// Entities: OAuth application = AppId, Account (AadUserId) = ServicePrincipalId, IP = IPAddresses
+let Lookback = 14d;
+let Window = 1h;
+let MinHistoryDays = 3;
+let MinNewEndpoints = 5;
+let MinFailedEndpoints = 5;
+let MaxNetworks = 150;
+let IsInternal = (ip: string) {
+    iff(isnotnull(parse_ipv4(ip)), ipv4_is_private(ip), ipv6_is_in_range(ip, "fc00::/7"))
+};
+let AppCalls = MicrosoftGraphActivityLogs
+    | where TimeGenerated > ago(Lookback)
+    // App-only tokens: a service principal and no user
+    | where isempty(UserId) and isnotempty(ServicePrincipalId)
+    | extend Path = replace_string(replace_string(replace_regex(tostring(parse_url(RequestUri).Path), @'(\/)+', '//'), 'v1.0/', ''), 'beta/', '')
+    | extend Endpoint = strcat(RequestMethod, " ", strcat_array(extract_all(@'\/([A-z2]+|\$batch)($|\/|\(|\$)', dynamic([1]), tolower(Path)), '/'))
+    | extend Failed = ResponseStatusCode in (400, 403, 404, 405)
+    | extend Throttled = ResponseStatusCode == 429
+    | extend UserAgentFamily = coalesce(tolower(extract(@"^([A-Za-z][A-Za-z0-9._-]*)", 1, UserAgent)), "(none)")
+    | extend Network = case(
+        IsInternal(IPAddress), "private or Microsoft-internal",
+        isnotnull(parse_ipv4(IPAddress)), format_ipv4_mask(IPAddress, 24),
+        strcat(parse_ipv6_mask(IPAddress, 48), "/48"))
+    | extend IsRecent = ingestion_time() > ago(Window)
+    | project TimeGenerated, IsRecent, AppId, ServicePrincipalId, Endpoint, Failed, Throttled, ResponseStatusCode, UserAgent, UserAgentFamily, IPAddress, Network;
+let History = AppCalls
+    | where not(IsRecent)
+    | summarize
+        HistoryDays = dcount(bin(TimeGenerated, 1d)),
+        HistEndpoints = make_set(Endpoint, 2000),
+        HistUserAgentFamilies = make_set(UserAgentFamily, 200),
+        HistNetworks = make_set(Network, 1000),
+        HistThrottled = countif(Throttled)
+        by AppId;
+let HistWorstFailureHour = AppCalls
+    | where not(IsRecent) and Failed
+    | summarize FailedEndpointsInHour = dcount(Endpoint) by AppId, bin(TimeGenerated, 1h)
+    | summarize HistMaxFailedEndpoints = max(FailedEndpointsInHour) by AppId;
+AppCalls
+| where IsRecent
+| summarize
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Requests = count(),
+    ServicePrincipalId = take_any(ServicePrincipalId),
+    Endpoints = make_set(Endpoint, 500),
+    FailedEndpoints = make_set_if(Endpoint, Failed, 200),
+    FailedRequests = countif(Failed),
+    ThrottledRequests = countif(Throttled),
+    StatusCodes = make_set(ResponseStatusCode, 20),
+    UserAgents = make_set(UserAgent, 10),
+    UserAgentFamilies = make_set(UserAgentFamily, 20),
+    IPAddresses = make_set(IPAddress, 20),
+    Networks = make_set(Network, 50)
+    by AppId
+| join kind = inner History on AppId
+| join kind = leftouter HistWorstFailureHour on AppId
+| where HistoryDays >= MinHistoryDays
+| extend HistMaxFailedEndpoints = coalesce(HistMaxFailedEndpoints, tolong(0))
+| extend
+    NewEndpoints = set_difference(Endpoints, HistEndpoints),
+    NewUserAgentFamilies = set_difference(UserAgentFamilies, HistUserAgentFamilies),
+    NewNetworks = set_difference(Networks, HistNetworks)
+| extend
+    NewEndpointCount = array_length(NewEndpoints),
+    FailedEndpointCount = array_length(FailedEndpoints)
+| extend
+    Exploring = NewEndpointCount >= MinNewEndpoints and array_length(HistEndpoints) < 2000,
+    FailingAcrossEndpoints = FailedEndpointCount >= MinFailedEndpoints and FailedEndpointCount > 2 * HistMaxFailedEndpoints,
+    NewClient = array_length(NewUserAgentFamilies) > 0,
+    SwitchingClients = array_length(UserAgentFamilies) >= 3,
+    NewNetwork = array_length(NewNetworks) > 0 and array_length(HistNetworks) < MaxNetworks,
+    NewThrottling = ThrottledRequests > 0 and HistThrottled == 0
+| extend Score =
+    iff(Exploring, 2, 0)
+    + iff(FailingAcrossEndpoints, 2, 0)
+    + iff(NewClient, 1, 0)
+    + iff(SwitchingClients, 1, 0)
+    + iff(NewNetwork, 1, 0)
+    + iff(NewThrottling, 1, 0)
+| where Score >= 2
+| extend Reasons = array_concat(
+    iff(Exploring, pack_array(strcat(NewEndpointCount, " endpoints it never called before")), dynamic([])),
+    iff(FailingAcrossEndpoints, pack_array(strcat("Failures on ", FailedEndpointCount, " endpoints (worst hour in history: ", HistMaxFailedEndpoints, ")")), dynamic([])),
+    iff(NewClient, pack_array(strcat("New user agent family: ", strcat_array(NewUserAgentFamilies, ", "))), dynamic([])),
+    iff(SwitchingClients, pack_array(strcat(array_length(UserAgentFamilies), " user agent families in one window")), dynamic([])),
+    iff(NewNetwork, pack_array(strcat("New network: ", strcat_array(NewNetworks, ", "))), dynamic([])),
+    iff(NewThrottling, pack_array(strcat("Throttled ", ThrottledRequests, " times, never before")), dynamic([])))
+| extend Severity = iff(Score >= 3, "High", "Medium")
+| project
+    TimeGenerated = LastSeen,
+    AppId,
+    ServicePrincipalId,
+    Severity,
+    Score,
+    Reasons,
+    NewEndpoints = array_slice(NewEndpoints, 0, 49),
+    FailedEndpoints = array_slice(FailedEndpoints, 0, 49),
+    StatusCodes,
+    Requests,
+    FailedRequests,
+    ThrottledRequests,
+    UserAgents,
+    IPAddresses,
+    FirstSeen,
+    LastSeen
+| order by Score desc

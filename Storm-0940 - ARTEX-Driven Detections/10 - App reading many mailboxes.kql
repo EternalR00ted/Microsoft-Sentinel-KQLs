@@ -1,0 +1,70 @@
+// App reading many mailboxes
+// Alert title: <Company> - Exchange - App {{AccessingApp}} read {{Mailboxes}} mailboxes it doesn't own
+//
+// What it catches
+//   An app reading mail across many mailboxes in an hour, well past its own busiest hour in the last 14 days, or an
+//   app reading many mailboxes that hasn't read any before. Storm-0940 has a history of pulling mail out through
+//   Microsoft Graph once it holds an OAuth app (Microsoft, Oct 21 2026), and a backup app's consent covers every
+//   mailbox in the tenant (Huntress, Todyl). Also flags reads of the hidden folder Exchange stores Teams chats in,
+//   which Microsoft called out as an OAuth app collection path in this campaign.
+//
+// The app is ClientAppId when it's filled in, otherwise AppId. Todyl's guidance for this campaign was to look for
+// mail, file and Teams reads where ClientAppId is the abused app's ID. Reads by the mailbox owner are left out.
+// The ClientIP on these records is usually Microsoft infrastructure, not the caller (Todyl), so it isn't scored.
+//
+// Tables: OfficeActivity (MailItemsAccessed is on by default for E5 users)
+// Run: every hour, look back 14 days. Severity: Severity column.
+// MITRE: T1114.002 Email Collection: Remote Email Collection
+// Entities: OAuth application = AccessingApp, Mailbox = SampleMailboxes
+let Lookback = 14d;
+let Window = 1h;
+let MinMailboxes = 10;
+let MailReads = OfficeActivity
+    | where TimeGenerated > ago(Lookback)
+    | where Operation == "MailItemsAccessed"
+    | extend AccessingApp = coalesce(ClientAppId, AppId)
+    | where isnotempty(AccessingApp) and isnotempty(MailboxOwnerUPN)
+    // Someone or something other than the owner reading the mailbox
+    | where tolower(UserId) != tolower(MailboxOwnerUPN)
+    | extend IsRecent = ingestion_time() > ago(Window)
+    | project TimeGenerated, IsRecent, AccessingApp, UserId, MailboxOwnerUPN, Folders, ClientIP, ClientInfoString;
+let History = MailReads
+    | where not(IsRecent)
+    | summarize MailboxesInHour = dcount(MailboxOwnerUPN) by AccessingApp, bin(TimeGenerated, 1h)
+    | summarize HistBusiestHour = max(MailboxesInHour), HistActiveHours = count() by AccessingApp;
+MailReads
+| where IsRecent
+| summarize
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Mailboxes = dcount(MailboxOwnerUPN),
+    SampleMailboxes = make_set(MailboxOwnerUPN, 25),
+    Records = count(),
+    // Teams chats are copied into a hidden mailbox folder (TeamsMessagesData)
+    TeamsChatReads = countif(Folders contains "TeamsMessages"),
+    Actors = make_set(UserId, 10),
+    ClientInfo = make_set(ClientInfoString, 10),
+    ClientIPs = make_set(ClientIP, 10)
+    by AccessingApp
+| join kind = leftouter History on AccessingApp
+| extend
+    HistBusiestHour = coalesce(HistBusiestHour, tolong(0)),
+    HistActiveHours = coalesce(HistActiveHours, tolong(0))
+| where Mailboxes >= MinMailboxes and Mailboxes > 2 * HistBusiestHour
+| extend Severity = iff(HistActiveHours == 0 or TeamsChatReads > 0 or Mailboxes >= 5 * MinMailboxes, "High", "Medium")
+| project
+    TimeGenerated = LastSeen,
+    AccessingApp,
+    Severity,
+    Mailboxes,
+    HistBusiestHour,
+    HistActiveHours,
+    TeamsChatReads,
+    Records,
+    SampleMailboxes,
+    Actors,
+    ClientInfo,
+    ClientIPs,
+    FirstSeen,
+    LastSeen
+| order by Mailboxes desc
