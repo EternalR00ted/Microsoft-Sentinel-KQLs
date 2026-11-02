@@ -1,0 +1,42 @@
+// Recon commands from a server process
+//
+// Fires when a web or database server starts a recon command, directly or through cmd or
+// PowerShell. whoami under w3wp.exe is the classic web shell tell. MITRE's T1482 page even
+// has Magic Hound running nltest through a web shell. Covers IIS, Apache, nginx, PHP, Caddy,
+// Tomcat, Exchange's UMWorkerProcess and SQL Server (xp_cmdshell). Java counts when its own
+// command line says Tomcat, JBoss or WebLogic, and any time it starts cmd or PowerShell,
+// because that's how a JSP web shell runs commands. net only counts for recon subcommands,
+// so a SQL job running net use won't fire.
+//
+// Runs:      Continuous (NRT)
+// Severity:  High
+// MITRE:     T1505.003, T1033, T1082, T1016
+// Tables:    DeviceProcessEvents
+// Custom details: ServerProcess, AccountName
+//
+// Needs:
+//   - Nothing beyond Defender for Endpoint.
+//
+// Heads up: build servers like Jenkins run shell steps from Java, so exclude those devices
+// if they trip it. It only looks two levels up. cmd starting PowerShell starting whoami under
+// w3wp won't match.
+//
+// Triage (paste into Recommended actions):
+//   - Check the server process, the app pool or service account, and the full command.
+//   - Escalate. Treat it as a web shell until you find what ran the command.
+//   - Close only if the app owner shows the app does this by design.
+//
+// Based on: Sigma "Webshell Detection With Command Line Keywords" and "Suspicious Process By
+// Web Server Process".
+
+DeviceProcessEvents
+| where ingestion_time() > ago(1d)
+| where FileName matches regex @'(?i)^(?:whoami|hostname|systeminfo|ipconfig|net1?|nltest|netstat|arp|route|tasklist|quser|qwinsta|qprocess|query|nslookup|dsquery|wmic|cmdkey|klist|setspn|gpresult|nbtstat|tracert|pathping)\.exe$' or ProcessVersionInfoOriginalFileName matches regex @'(?i)^(?:whoami|sysinfo|ipconfig|net1?|nltestrk|netstat|tasklist|quser|qwinsta|nslookup|dsquery|wmic|cmdkey|setspn|gprslt|tracert|pathping)\.exe(?:\.mui)?$'
+| where (FileName !~ "net.exe" and FileName !~ "net1.exe" and ProcessVersionInfoOriginalFileName !startswith "net.exe" and ProcessVersionInfoOriginalFileName !startswith "net1.exe") or ProcessCommandLine matches regex @'(?i)^\s*(?:"[^"]*"|[^\s"]\S*\s)\s*(?:"*/\S*\s+)*(?:"*u"*s"*e"*r"*s"*|"*u"*s"*e"*r"*|"*g"*r"*o"*u"*p"*s"*|"*g"*r"*o"*u"*p"*|"*l"*o"*c"*a"*l"*g"*r"*o"*u"*p"*|"*v"*i"*e"*w"*|"*s"*h"*a"*r"*e"*s"*|"*s"*h"*a"*r"*e"*|"*s"*e"*s"*s"*i"*o"*n"*s"*|"*s"*e"*s"*s"*i"*o"*n"*|"*a"*c"*c"*o"*u"*n"*t"*s"*|"*c"*o"*n"*f"*i"*g"*)(?:\s|$)'
+| extend ServerProcess = case(InitiatingProcessFileName matches regex @'(?i)^(?:w3wp|httpd|nginx|php-cgi|php|caddy|tomcat\d*|ws_tomcatservice|umworkerprocess|sqlservr)\.exe$', InitiatingProcessFileName,
+                              InitiatingProcessFileName matches regex @'(?i)^(?:cmd|powershell|pwsh)\.exe$' and InitiatingProcessParentFileName matches regex @'(?i)^(?:w3wp|httpd|nginx|php-cgi|php|caddy|tomcat\d*|ws_tomcatservice|umworkerprocess|sqlservr)\.exe$', InitiatingProcessParentFileName,
+                              InitiatingProcessFileName matches regex @'(?i)^javaw?\.exe$' and InitiatingProcessCommandLine matches regex @'(?i)catalina|tomcat|jboss|weblogic', InitiatingProcessFileName,
+                              InitiatingProcessFileName matches regex @'(?i)^(?:cmd|powershell|pwsh)\.exe$' and InitiatingProcessParentFileName matches regex @'(?i)^javaw?\.exe$', InitiatingProcessParentFileName,
+                              "")
+| where isnotempty(ServerProcess)
+| project Timestamp, ReportId, DeviceId, DeviceName, ServerProcess, AccountDomain, AccountName, AccountSid, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
