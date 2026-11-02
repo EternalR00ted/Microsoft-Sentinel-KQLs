@@ -1,0 +1,33 @@
+// PowerView recon functions run
+//
+// Fires when PowerShell runs a PowerView recon function, like Get-DomainUser,
+// Find-LocalAdminAccess or Invoke-UserHunter. Microsoft says the PowerShellCommand event covers
+// every command the PowerShell engine runs, in any process, so this still works when the
+// script is loaded straight into memory. The list comes from PowerView's own source, old
+// aliases included. Names that clash with other modules, like Get-Domain and Get-ADObject,
+// are left out.
+//
+// Runs:      Continuous (NRT)
+// Severity:  High
+// MITRE:     T1087.002, T1069.002, T1482, T1615, T1135, T1049, T1558.003
+// Tables:    DeviceEvents
+// Custom details: InitiatingProcessAccountName, InitiatingProcessFileName
+//
+// Needs:
+//   - Nothing beyond Defender for Endpoint.
+//
+// Heads up: renamed functions and SharpView, the C# port, won't show up here.
+//
+// Triage (paste into Recommended actions):
+//   - Check the account, the device and the process hosting PowerShell.
+//   - Escalate. PowerView has no business on a normal workstation or server.
+//   - Close only for an approved pentest or red team, and note the ticket.
+//
+// Based on: PowerSploit's Recon/PowerView.ps1, Microsoft's PowerShellCommand hunting queries.
+
+DeviceEvents
+| where ingestion_time() > ago(1d)
+| where ActionType == "PowerShellCommand"
+| extend Command = tostring(parse_json(AdditionalFields).Command)
+| where Command matches regex @'(?i)^(?:[^\\]*\\)?(?:get-domainuser|get-domaincomputer|get-domaingroup|get-domaingroupmember|get-domaingroupmemberdeleted|get-domaincontroller|get-domaintrust|get-domaintrustmapping|get-foresttrust|get-forestdomain|get-forestglobalcatalog|get-domainou|get-domainsite|get-domainsubnet|get-domaingpo|get-domaingpolocalgroup|get-domaingpouserlocalgroupmapping|get-domaingpocomputerlocalgroupmapping|get-domainfileserver|get-domaindfsshare|get-domainforeignuser|get-domainforeigngroupmember|get-domainmanagedsecuritygroup|get-domainobjectacl|get-domainpolicydata|get-domainspnticket|get-domaindnszone|get-domaindnsrecord|get-domainuserevent|get-gpodelegation|find-interestingdomainacl|find-domainuserlocation|find-domainprocess|find-domainuserevent|find-domainshare|find-interestingdomainsharefile|find-localadminaccess|find-domainlocalgroupmember|find-domainobjectpropertyoutlier|get-netlocalgroup|get-netlocalgroupmember|get-netshare|get-netloggedon|get-netsession|get-netrdpsession|get-regloggedon|test-adminaccess|invoke-kerberoast|get-netdomain|get-netdomaincontroller|get-netforest|get-netforestdomain|get-netforestcatalog|get-netuser|get-netcomputer|get-objectacl|invoke-aclscanner|get-netou|get-netsite|get-netsubnet|get-netgroup|find-managedsecuritygroups|get-netgroupmember|get-netfileserver|get-dfsshare|get-netgpo|get-netgpogroup|find-gpolocation|find-gpocomputeradmin|get-loggedonlocal|invoke-checklocaladminaccess|request-spnticket|get-cachedrdpconnection|invoke-userhunter|invoke-processhunter|invoke-eventhunter|invoke-sharefinder|invoke-filefinder|invoke-enumeratelocaladmin|get-netdomaintrust|get-netforesttrust|find-foreignuser|find-foreigngroup|invoke-mapdomaintrust|get-domainpolicy)$'
+| project Timestamp, ReportId, DeviceId, DeviceName, Command, InitiatingProcessAccountDomain, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName

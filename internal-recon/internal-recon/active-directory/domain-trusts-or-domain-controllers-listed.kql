@@ -1,0 +1,41 @@
+// Domain trusts or domain controllers listed
+//
+// Fires when nltest lists domain trusts or domain controllers or looks up a user, and when
+// dsquery pulls trusted domains or the domain controller list. MITRE lists QakBot, TrickBot,
+// Bazar, Akira and FIN8 all using nltest for trust discovery. It catches renamed nltest
+// (its version info says nltestrk.exe) and the Unicode slashes ArgFuscator found nltest
+// accepts. /dsgetdc, /sc_query and /sc_verify are left out because IT uses them to
+// troubleshoot.
+//
+// Runs:      Continuous (NRT)
+// Severity:  Medium
+// MITRE:     T1482, T1018
+// Tables:    DeviceProcessEvents
+// Custom details: AccountName, InitiatingProcessFileName
+//
+// Needs:
+//   - Nothing beyond Defender for Endpoint.
+//
+// Heads up: nltest also takes lookalike letters, like a fullwidth d. This rule only matches
+// plain letters. "Recon tool run with lookalike characters" catches the rest.
+//
+// Triage (paste into Recommended actions):
+//   - Check the account, the device and what launched it.
+//   - Escalate if it isn't a known admin, or if other recon commands ran around it.
+//   - Close if it's ticketed admin work.
+//
+// Based on: Sigma "Potential Recon Activity Via Nltest.EXE" and "Domain Trust Discovery Via
+// Dsquery", ArgFuscator's nltest.exe model, MITRE T1482.
+
+DeviceProcessEvents
+| where ingestion_time() > ago(1d)
+| where FileName =~ "nltest.exe" or ProcessVersionInfoOriginalFileName startswith "nltestrk.exe" or FileName =~ "dsquery.exe" or ProcessVersionInfoOriginalFileName startswith "dsquery.exe"
+| extend IsNltest = FileName =~ "nltest.exe" or ProcessVersionInfoOriginalFileName startswith "nltestrk.exe"
+| extend Summary = case(IsNltest and ProcessCommandLine matches regex @'(?i)\s"*[/\x{2044}\x{2215}]"*(?:d"*o"*m"*a"*i"*n"*_"*t"*r"*u"*s"*t"*s|a"*l"*l"*_"*t"*r"*u"*s"*t"*s|t"*r"*u"*s"*t"*e"*d"*_"*d"*o"*m"*a"*i"*n"*s|p"*a"*r"*e"*n"*t"*d"*o"*m"*a"*i"*n)', "Listed domain trusts with nltest",
+                        IsNltest and ProcessCommandLine matches regex @'(?i)\s"*[/\x{2044}\x{2215}]"*(?:d"*c"*l"*i"*s"*t|d"*n"*s"*g"*e"*t"*d"*c)', "Listed domain controllers with nltest",
+                        IsNltest and ProcessCommandLine matches regex @'(?i)\s"*[/\x{2044}\x{2215}]"*u"*s"*e"*r"*:', "Looked up a domain user with nltest",
+                        IsNltest == false and ProcessCommandLine matches regex @'(?i)t"*r"*u"*s"*t"*e"*d"*d"*o"*m"*a"*i"*n', "Listed domain trusts with dsquery",
+                        IsNltest == false and ProcessCommandLine matches regex @'(?i)^\s*(?:"[^"]*"|[^\s"]\S*\s)\s*"*s"*e"*r"*v"*e"*r"*(?:\s|$)', "Listed domain controllers with dsquery",
+                        "")
+| where isnotempty(Summary)
+| project Timestamp, ReportId, DeviceId, DeviceName, Summary, AccountDomain, AccountName, AccountSid, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
