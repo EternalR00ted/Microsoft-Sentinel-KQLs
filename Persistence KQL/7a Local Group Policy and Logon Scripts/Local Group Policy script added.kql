@@ -1,0 +1,9 @@
+DeviceFileEvents
+| where ActionType startswith "FileCreated" or ActionType startswith "FileRenamed" or ActionType startswith "FileModified"
+| where FolderPath contains "GroupPolicy"
+| extend LowerPath = tolower(FolderPath), LowerName = tolower(FileName)
+| where LowerPath matches regex @"^c:\\windows\\(system32|syswow64)\\grouppolicy(users)?(\\|$)"
+| where LowerPath !contains @"\datastore\"
+| where LowerName in ("scripts.ini", "psscripts.ini") or LowerPath matches regex @"\\scripts\\(startup|shutdown|logon|logoff)(\\|$)"
+| extend Reason = strcat("Local Group Policy script file written: ", FileName)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, SHA1, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

@@ -1,0 +1,12 @@
+DeviceFileEvents
+| where ActionType startswith "FileCreated" or ActionType startswith "FileRenamed" or ActionType startswith "FileModified"
+| where FileName endswith ".dll"
+| extend DllName = tolower(FileName), LowerPath = tolower(FolderPath)
+| where DllName in ("axeonoffhelper.dll", "cdpsgshims.dll", "mstracer.dll", "offdmpsvc.dll", "shellchromeapi.dll", "tsmsisrv.dll", "tsvipsrv.dll", "wlbsctrl.dll", "wow64log.dll", "wptsextensions.dll")
+    or (DllName == "oci.dll" and LowerPath matches regex @"^c:\\windows(\\|$)")
+    or (DllName == "microsoft.ui.xaml.xamltypeinfo.dll" and LowerPath contains @"\microsoft\onedrive")
+| extend Writer = tolower(InitiatingProcessFileName), WriterPath = tolower(InitiatingProcessFolderPath)
+| extend IsServicing = InitiatingProcessAccountSid == "S-1-5-18" and ((Writer in ("tiworker.exe", "poqexec.exe") and WriterPath matches regex @"^c:\\windows\\(winsxs\\[^\\]+|system32)(\\[^\\]+\.exe)?$") or (Writer == "trustedinstaller.exe" and WriterPath matches regex @"^c:\\windows\\servicing(\\[^\\]+\.exe)?$"))
+| where IsServicing == false
+| extend Reason = strcat("Phantom DLL written: ", FileName)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, SHA1, FileOriginUrl, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

@@ -1,0 +1,25 @@
+DeviceRegistryEvents
+| where RegistryKey contains @"\Schedule\TaskCache\" or PreviousRegistryKey contains @"\Schedule\TaskCache\"
+| extend IsDelete = ActionType in ("RegistryValueDeleted", "RegistryKeyDeleted")
+| extend EventKey = iif(IsDelete and isnotempty(PreviousRegistryKey), PreviousRegistryKey, RegistryKey)
+| extend EventValueName = iif(ActionType == "RegistryValueDeleted" and isnotempty(PreviousRegistryValueName), PreviousRegistryValueName, RegistryValueName)
+| where EventKey contains @"\Schedule\TaskCache\"
+| extend Writer = tolower(InitiatingProcessFileName), WriterPath = tolower(InitiatingProcessFolderPath), Key = tolower(EventKey), ValueName = tolower(EventValueName)
+| extend IsSystem = InitiatingProcessAccountSid == "S-1-5-18"
+| extend IsWindowsWriter = IsSystem and Writer in ("svchost.exe", "services.exe", "mousocoreworker.exe", "sppsvc.exe", "msiexec.exe") and WriterPath matches regex @"^c:\\windows\\(system32|syswow64)(\\[^\\]+\.exe)?$"
+| extend IsServicing = IsSystem and ((Writer == "tiworker.exe" and WriterPath matches regex @"^c:\\windows\\winsxs\\[^\\]+(\\[^\\]+\.exe)?$") or (Writer == "trustedinstaller.exe" and WriterPath matches regex @"^c:\\windows\\servicing(\\[^\\]+\.exe)?$") or (Writer in ("setuphost.exe", "setupplatform.exe") and WriterPath matches regex @"^c:\\\$windows\.~bt\\sources(\\[^\\]+\.exe)?$"))
+| extend IsKernel = Writer == "system"
+| extend IsKnownApp = (Writer == "ngen.exe" and WriterPath matches regex @"^c:\\windows\\microsoft\.net\\framework(64)?\\v[0-9.]+(\\[^\\]+\.exe)?$" and (Key contains @"\tree\microsoft\windows\.net framework\" or Key contains "{b66b135d-da06-4fc4-95f8-7458e1d10129}")) or (Writer in ("integrator.exe", "officec2rclient.exe") and WriterPath matches regex @"^c:\\program files( \(x86\))?\\(microsoft office\\root\\integration|common files\\microsoft shared\\clicktorun)(\\[^\\]+\.exe)?$") or (Writer == "explorer.exe" and WriterPath matches regex @"^c:\\windows(\\explorer\.exe)?$" and Key contains @"\tree\microsoft\windows\pla\")
+| extend IsKnownBuiltInSet = ActionType == "RegistryValueSet" and (Key contains @"\tree\microsoft\windows\updateorchestrator\" or (ValueName == "index" and (Key endswith @"\microsoft\windows\softwareprotectionplatform\svcrestarttask" or Key endswith @"\microsoft\windows\flighting\onesettings\refreshcache")))
+| where IsWindowsWriter == false and IsServicing == false and IsKernel == false and IsKnownApp == false and IsKnownBuiltInSet == false
+| extend Reason = case(
+    ActionType == "RegistryValueDeleted" and Key contains @"\taskcache\tree\" and ValueName == "sd", "Task security descriptor deleted: task hidden from Task Scheduler and schtasks",
+    ActionType == "RegistryValueDeleted" and Key contains @"\taskcache\tree\" and ValueName == "index", "Task Index value deleted: task hidden from schtasks",
+    ActionType == "RegistryValueSet" and Key contains @"\taskcache\tree\" and ValueName in ("sd", "index", "id"), "Task SD, Index or Id written outside Task Scheduler",
+    ActionType == "RegistryValueSet" and Key contains @"\taskcache\tasks\" and ValueName in ("actions", "triggers", "path", "dynamicinfo"), "Task actions or triggers written outside Task Scheduler",
+    ActionType == "RegistryKeyCreated" and (Key contains @"\taskcache\tree\" or Key contains @"\taskcache\tasks\"), "Task registry key created outside Task Scheduler",
+    ActionType == "RegistryKeyDeleted" and (Key contains @"\taskcache\tree\" or Key contains @"\taskcache\tasks\"), "Task registry key deleted outside Task Scheduler",
+    "")
+| where isnotempty(Reason)
+| extend TaskPath = extract(@"(?i)\\TaskCache\\(?:Tree|Tasks)\\(.+)$", 1, EventKey)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, TaskPath, RegistryKey = EventKey, RegistryValueName = EventValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

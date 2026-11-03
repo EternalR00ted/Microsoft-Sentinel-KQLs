@@ -1,0 +1,12 @@
+let lookback = 30d;
+AlertInfo
+| where Timestamp > ago(lookback)
+| where Title has_any ("UEFI", "firmware", "EFI", "bootkit", "bootloader", "Boot", "SPI")
+| join kind=inner (
+    AlertEvidence
+    | where Timestamp > ago(lookback)
+    | where isnotempty(DeviceId)
+    | summarize DeviceId = take_any(DeviceId), DeviceName = take_any(DeviceName) by AlertId
+    ) on AlertId
+| summarize Alerts = make_set(Title, 20), Severities = make_set(Severity, 5), DetectionSources = make_set(DetectionSource, 5), AlertIds = make_set(AlertId, 20), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by DeviceId, DeviceName
+| order by LastSeen desc

@@ -1,0 +1,13 @@
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey contains @"\Microsoft\Office"
+| extend Key = tolower(RegistryKey), ValueName = tolower(RegistryValueName), Data = tolower(RegistryValueData)
+| extend IsAbsolutePath = Data matches regex @"([a-z]:\\|\\\\)"
+| extend OutsideOffice = (Data matches regex @"^\s*(/[a-z]+\s+)*""?c:\\program files( \(x86\))?\\") == false
+| extend Reason = case(
+    Key contains @"\office test\special\perf", "Office Test key set: the DLL loads into every Office app",
+    Key endswith @"\excel\options" and ValueName startswith "open" and Data matches regex @"\.(xll|xla|xlam|dll)\b" and IsAbsolutePath and OutsideOffice, "Excel add-in set to load at startup from outside Office folders",
+    Key matches regex @"\\powerpoint\\addins\\[^\\]+$" and ValueName == "path" and IsAbsolutePath and OutsideOffice, "PowerPoint add-in set to load from outside Office folders",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

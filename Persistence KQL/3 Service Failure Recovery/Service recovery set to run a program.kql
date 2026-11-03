@@ -1,0 +1,8 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryValueName =~ "FailureCommand"
+| where RegistryKey matches regex @"(?i)\\SYSTEM\\(CurrentControlSet|ControlSet\d{3})\\Services\\[^\\]+$"
+| where isnotempty(RegistryValueData)
+| extend ServiceName = extract(@"(?i)\\Services\\([^\\]+)$", 1, RegistryKey)
+| extend Reason = strcat("Recovery command set on service ", ServiceName)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, ServiceName, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

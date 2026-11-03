@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "services.exe"
+| extend Name = tolower(FileName), OrigName = tolower(ProcessVersionInfoOriginalFileName)
+| where Name in ("cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe", "msbuild.exe", "installutil.exe")
+    or OrigName in ("cmd.exe", "powershell.exe", "pwsh.dll", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe", "msbuild.exe", "installutil.exe")
+| extend Reason = strcat("Service manager started ", FileName)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, ProcessCommandLine, SHA1, AccountName, AccountSid, AccountUpn, AccountObjectId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine

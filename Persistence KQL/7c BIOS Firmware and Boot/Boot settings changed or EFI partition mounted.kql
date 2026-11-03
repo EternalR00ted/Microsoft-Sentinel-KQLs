@@ -1,0 +1,15 @@
+DeviceProcessEvents
+| where FileName =~ "bcdedit.exe" or FileName =~ "mountvol.exe" or ProcessVersionInfoOriginalFileName =~ "bcdedit.exe" or ProcessVersionInfoOriginalFileName =~ "mountvol.exe"
+| extend Name = tolower(FileName), OrigName = tolower(ProcessVersionInfoOriginalFileName), Cmd = tolower(ProcessCommandLine)
+| extend IsBcdedit = Name == "bcdedit.exe" or OrigName == "bcdedit.exe"
+| extend IsMountvol = Name == "mountvol.exe" or OrigName == "mountvol.exe"
+| extend Reason = case(
+    IsBcdedit and Cmd matches regex @"\btestsigning\s+(on|yes|true)\b", "Test signing turned on: unsigned drivers can load",
+    IsBcdedit and Cmd matches regex @"\bnointegritychecks\s+(on|yes|true)\b", "Driver integrity checks turned off",
+    IsBcdedit and Cmd matches regex @"\b(hypervisorlaunchtype|vsmlaunchtype)\s+off\b", "Hypervisor or VBS launch turned off",
+    IsBcdedit and Cmd matches regex @"\b(recoveryenabled\s+(no|off|false)|bootstatuspolicy\s+ignoreallfailures)\b", "Windows recovery turned off",
+    IsBcdedit and Cmd contains "{bootmgr}" and Cmd has "set" and Cmd matches regex @"\b(path|device)\b", "Boot manager path or device changed",
+    IsMountvol and Cmd matches regex @"\s/s\b", "EFI system partition mounted",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, ProcessCommandLine, SHA1, AccountName, AccountSid, AccountUpn, AccountObjectId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessParentFileName

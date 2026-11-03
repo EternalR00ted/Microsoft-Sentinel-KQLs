@@ -1,0 +1,40 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet" or ActionType == "RegistryValueDeleted"
+| extend EventKey = iif(ActionType == "RegistryValueDeleted" and isnotempty(PreviousRegistryKey), PreviousRegistryKey, RegistryKey)
+| extend EventValueName = iif(ActionType == "RegistryValueDeleted" and isnotempty(PreviousRegistryValueName), PreviousRegistryValueName, RegistryValueName)
+| where EventKey contains @"\Windows NT\CurrentVersion\Windows" or EventKey contains "AppCertDlls" or EventKey contains @"\Control\Lsa" or EventKey contains "NetSh" or EventKey contains @"\Control\Print\" or EventKey contains "TimeProviders" or EventKey contains "Session Manager" or EventKey contains @"\Winlogon\" or EventKey contains "Shell Folders" or EventKey contains "Command Processor" or EventKey contains "Active Setup" or EventKey contains "SafeBoot" or EventKey contains "NetworkProvider" or EventKey contains "SecurityProviders" or EventKey contains "Terminal Server" or EventKey contains "BootVerificationProgram"
+| where EventKey !contains @"\ClickToRun\REGISTRY\" and EventKey !contains @"\ClickToRunStore\"
+| where (ActionType == "RegistryValueSet" and isnotempty(RegistryValueData) and RegistryValueData != PreviousRegistryValueData) or (ActionType == "RegistryValueDeleted" and EventKey endswith @"\Session Manager\KnownDLLs")
+| extend Key = tolower(EventKey), ValueName = tolower(EventValueName), ValueData = tolower(RegistryValueData)
+| extend Reason = case(
+    Key endswith @"\microsoft\windows nt\currentversion\windows" and ValueName in ("appinit_dlls", "loadappinit_dlls"), "AppInit DLLs",
+    Key endswith @"\microsoft\windows nt\currentversion\windows" and ValueName in ("load", "run"), "Legacy Windows Load or Run value",
+    Key endswith @"\control\session manager\appcertdlls", "AppCert DLLs",
+    Key endswith @"\control\session manager\knowndlls", "KnownDLLs list changed",
+    Key matches regex @"\\control\\lsa(\\osconfig)?$" and ValueName in ("security packages", "authentication packages", "notification packages"), "LSA package list",
+    Key endswith @"\control\securityproviders" and ValueName == "securityproviders" and ValueData != "credssp.dll", "Security provider DLL list",
+    Key matches regex @"\\software\\(wow6432node\\)?microsoft\\netsh$", "Netsh helper DLL",
+    Key matches regex @"\\control\\print\\monitors\\[^\\]+$" and ValueName == "driver", "Print monitor DLL",
+    Key matches regex @"\\control\\print\\environments\\[^\\]+\\print processors\\[^\\]+$" and ValueName == "driver", "Print processor DLL",
+    Key matches regex @"\\control\\print\\providers\\[^\\]+$" and ValueName == "name", "Print provider DLL",
+    Key contains @"\services\w32time\timeproviders\" and ValueName == "dllname", "Time provider DLL",
+    Key endswith @"\control\session manager" and ValueName in ("bootexecute", "setupexecute", "execute"), "Session Manager boot-time program",
+    Key endswith @"\control\bootverificationprogram" and ValueName == "imagepath", "Boot verification program",
+    Key endswith @"\control\safeboot" and ValueName == "alternateshell" and ValueData != "cmd.exe", "Safe Mode alternate shell changed",
+    Key matches regex @"\\winlogon\\notify\\[^\\]+$" and ValueName == "dllname", "Winlogon notify DLL",
+    Key matches regex @"\\winlogon\\gpextensions\\[^\\]+$" and ValueName == "dllname", "Group Policy client-side extension DLL",
+    Key endswith @"\control\networkprovider\order" and ValueName == "providerorder", "Network provider order changed",
+    Key matches regex @"\\services\\[^\\]+\\networkprovider$" and ValueName == "providerpath", "Network provider DLL",
+    Key endswith @"\terminal server\winstations\rdp-tcp" and ValueName == "initialprogram", "RDP session initial program set",
+    Key endswith @"\terminal server\wds\rdpwd" and ValueName == "startupprograms" and ValueData != "rdpclip", "RDP session startup programs changed",
+    Key matches regex @"\\explorer\\(user shell folders|shell folders)$" and ValueName in ("startup", "common startup") and ValueData !contains @"\start menu\programs\startup", "Startup folder moved to a new location",
+    Key matches regex @"\\software\\(wow6432node\\)?microsoft\\command processor$" and ValueName == "autorun", "cmd.exe AutoRun command",
+    Key contains @"\active setup\installed components\" and ValueName == "stubpath" and ValueData matches regex @"(\\users\\|\\windows\\temp\\|\\programdata\\[^\\]+\.(exe|dll)\b|\bpowershell|\bpwsh|\bmshta|\bwscript|\bcscript|\brundll32|\bregsvr32|\bcmd(\.exe)?""?\s+/[ck]\b)", "Active Setup StubPath runs a script host or a user folder program",
+    "")
+| where isnotempty(Reason)
+| extend IsSwitchedOff = ValueName == "loadappinit_dlls" and ValueData in ("0", "0x0", "0x00000000")
+| extend IsDefaultValue = (Reason == "Session Manager boot-time program" and ValueData matches regex @"^\s*autocheck autochk \*\s*$") or (Reason == "Time provider DLL" and ValueData matches regex @"^(%systemroot%|c:\\windows)\\system32\\(w32time|vmictimeprovider)\.dll$")
+| extend Writer = tolower(InitiatingProcessFileName), WriterPath = tolower(InitiatingProcessFolderPath)
+| extend IsServicing = InitiatingProcessAccountSid == "S-1-5-18" and ((Writer in ("tiworker.exe", "poqexec.exe") and WriterPath matches regex @"^c:\\windows\\(winsxs\\[^\\]+|system32)(\\[^\\]+\.exe)?$") or (Writer == "trustedinstaller.exe" and WriterPath matches regex @"^c:\\windows\\servicing(\\[^\\]+\.exe)?$") or (Writer in ("setuphost.exe", "setupplatform.exe") and WriterPath matches regex @"^c:\\\$windows\.~bt\\sources(\\[^\\]+\.exe)?$") or (Writer == "dismhost.exe" and WriterPath matches regex @"^c:\\windows\\temp\\\{[0-9a-f-]+\}(\\[^\\]+\.exe)?$"))
+| where IsSwitchedOff == false and IsDefaultValue == false and IsServicing == false
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, RegistryKey = EventKey, RegistryValueName = EventValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

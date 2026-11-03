@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where ProcessCommandLine contains "EventFilter" or ProcessCommandLine contains "EventConsumer" or ProcessCommandLine contains "FilterToConsumerBinding" or ProcessCommandLine contains "subscription" or FileName =~ "mofcomp.exe" or ProcessVersionInfoOriginalFileName =~ "mofcomp.exe"
+| extend Cmd = tolower(ProcessCommandLine), Name = tolower(FileName), OrigName = tolower(ProcessVersionInfoOriginalFileName)
+| extend NamesSubscriptionClass = Cmd contains "__eventfilter" or Cmd contains "__filtertoconsumerbinding" or Cmd contains "commandlineeventconsumer" or Cmd contains "activescripteventconsumer"
+| extend UsesCreateVerb = Cmd contains "set-wmiinstance" or Cmd contains "new-ciminstance" or Cmd contains "createinstance" or Cmd contains ".put(" or Cmd has "create"
+| extend Reason = case(
+    NamesSubscriptionClass and UsesCreateVerb, "Command line creates WMI subscription objects",
+    (Name == "wmic.exe" or OrigName == "wmic.exe") and Cmd contains @"root\subscription" and (Cmd has "create" or Cmd has "set"), "wmic writes to the WMI subscription namespace",
+    (Name == "mofcomp.exe" or OrigName == "mofcomp.exe") and Cmd matches regex @"(\\users\\|\\windows\\temp\\|\\perflogs\\|\\programdata\\[^\\]+\.mof\b|\b[a-z]:\\temp\\)", "mofcomp compiles a MOF file from a user-writable folder",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, ProcessCommandLine, SHA1, AccountName, AccountSid, AccountUpn, AccountObjectId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessParentFileName

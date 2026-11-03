@@ -1,0 +1,14 @@
+DeviceEvents
+| where ActionType == "WmiBindEventFilterToConsumer"
+| extend Raw = tolower(AdditionalFields)
+| extend ConsumerType = case(
+    Raw contains "commandlineeventconsumer", "CommandLineEventConsumer",
+    Raw contains "activescripteventconsumer", "ActiveScriptEventConsumer",
+    "")
+| where isnotempty(ConsumerType)
+| extend AF = parse_json(AdditionalFields)
+| extend Consumer = tostring(AF.Consumer), WmiNamespace = tostring(AF.Namespace), PossibleCause = tostring(AF.PossibleCause)
+| extend EventFilter = iif(isnotempty(tostring(AF.ESS)), tostring(AF.ESS), tostring(AF.Ess))
+| extend CommandOrScript = extract(@"(?is)(CommandLineTemplate|ExecutablePath|ScriptText|ScriptFileName)\s*=\s*(.{0,300})", 2, PossibleCause)
+| extend Reason = strcat("WMI subscription bound to a ", ConsumerType)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, ConsumerType, Consumer, EventFilter, WmiNamespace, CommandOrScript, PossibleCause, AdditionalFields, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

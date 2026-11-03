@@ -1,0 +1,13 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey contains "DeviceGuard" or RegistryKey contains @"\Control\CI\Config"
+| extend Key = tolower(RegistryKey), ValueName = tolower(RegistryValueName), Data = tolower(RegistryValueData)
+| extend IsZero = Data in ("0", "0x0", "0x00000000")
+| extend Reason = case(
+    Key endswith @"\control\deviceguard\scenarios\hypervisorenforcedcodeintegrity" and ValueName == "enabled" and IsZero, "Memory integrity (HVCI) turned off",
+    Key endswith @"\control\deviceguard" and ValueName == "enablevirtualizationbasedsecurity" and IsZero, "Virtualization-based security turned off",
+    Key endswith @"\policies\microsoft\windows\deviceguard" and ValueName in ("enablevirtualizationbasedsecurity", "hypervisorenforcedcodeintegrity") and IsZero, "Device Guard policy set to off",
+    Key endswith @"\control\ci\config" and ValueName == "vulnerabledriverblocklistenable" and IsZero, "Microsoft vulnerable driver blocklist turned off",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

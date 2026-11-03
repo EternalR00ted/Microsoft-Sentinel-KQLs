@@ -1,0 +1,20 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey contains @"\Services\"
+| where RegistryKey matches regex @"(?i)\\SYSTEM\\(CurrentControlSet|ControlSet\d{3})\\Services\\[^\\]+(\\Parameters)?$"
+| extend ValueName = tolower(RegistryValueName)
+| where ValueName in ("imagepath", "servicedll")
+| where RegistryValueData != PreviousRegistryValueData
+| extend ServiceName = extract(@"(?i)\\Services\\([^\\]+)", 1, RegistryKey)
+| extend NewValue = tolower(RegistryValueData)
+| extend Writer = tolower(InitiatingProcessFileName), WriterPath = tolower(InitiatingProcessFolderPath), IsSystem = InitiatingProcessAccountSid == "S-1-5-18"
+| extend InSystem32 = WriterPath matches regex @"^c:\\windows\\(system32|syswow64)(\\[^\\]+\.exe)?$"
+| extend IsServiceManager = IsSystem and Writer == "services.exe" and WriterPath matches regex @"^c:\\windows\\system32(\\services\.exe)?$"
+| extend IsServicing = IsSystem and ((Writer in ("drvinst.exe", "poqexec.exe", "msiexec.exe", "setupplatform.exe") and WriterPath matches regex @"^c:\\windows\\(system32|syswow64)(\\[^\\]+\.exe)?$") or (Writer in ("tiworker.exe", "poqexec.exe") and WriterPath matches regex @"^c:\\windows\\(winsxs\\[^\\]+|system32)(\\[^\\]+\.exe)?$") or (Writer == "trustedinstaller.exe" and WriterPath matches regex @"^c:\\windows\\servicing(\\[^\\]+\.exe)?$") or (Writer in ("setuphost.exe", "setupplatform.exe") and WriterPath matches regex @"^c:\\\$windows\.~bt\\sources(\\[^\\]+\.exe)?$") or (Writer == "dismhost.exe" and WriterPath matches regex @"^c:\\windows\\temp\\\{[0-9a-f-]+\}(\\[^\\]+\.exe)?$"))
+| extend IsDriverUpdate = NewValue matches regex @"^(\\systemroot\\|\\\?\?\\c:\\windows\\|c:\\windows\\)?system32\\(drivers|driverstore)\\" and ((IsSystem and InSystem32 and Writer in ("svchost.exe", "drvinst.exe", "pnputil.exe", "ntoskrnl.exe")) or Writer in ("system", ""))
+| extend IsDefenderUpdate = WriterPath matches regex @"^c:\\(programdata\\microsoft\\windows defender\\platform\\[^\\]+|program files\\windows defender)(\\[^\\]+\.exe)?$" and (NewValue matches regex @"^""?c:\\programdata\\microsoft\\windows defender\\platform\\[^\\]+\\[^\\]+\.(exe|sys)""?$" or NewValue matches regex @"^(\\systemroot\\|%systemroot%\\|c:\\windows\\)?system32\\drivers\\wd\\[^\\]+\.sys$")
+| extend LooksSuspicious = NewValue matches regex @"(%comspec%|\bcmd(\.exe)?""?(\s+/[a-z]+)*\s+/[ckr]\b|\bpowershell|\bpwsh|\bmshta|\brundll32|\bregsvr32|\bwscript|\bcscript|\\users\\|\\windows\\temp\\|\\perflogs\\|\\programdata\\[^\\]+\.(exe|dll)\b|\b[a-z]:\\temp\\)"
+| extend IsKnownWindowsValue = (RegistryKey endswith @"\Services\PrintNotify\Parameters" and NewValue matches regex @"^(%systemroot%|c:\\windows)\\system32\\(spool\\drivers|driverstore\\filerepository)\\.+\\printconfig\.dll$") or (IsSystem and InSystem32 and Writer == "lsass.exe" and RegistryKey endswith @"\Services\NTDS\Parameters" and NewValue endswith @"\ntdsa.dll")
+| where LooksSuspicious or (IsServiceManager == false and IsServicing == false and IsDriverUpdate == false and IsDefenderUpdate == false and IsKnownWindowsValue == false)
+| extend Reason = iif(LooksSuspicious, "Service now points at a shell, script host or user-writable folder", "Service ImagePath or ServiceDll written directly instead of through the service manager")
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, ServiceName, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

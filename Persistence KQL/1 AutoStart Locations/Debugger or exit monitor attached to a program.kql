@@ -1,0 +1,14 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey contains @"\Image File Execution Options\" or RegistryKey contains @"\SilentProcessExit\"
+| where RegistryKey !contains @"\ClickToRun\REGISTRY\" and RegistryKey !contains @"\ClickToRunStore\"
+| extend ValueName = tolower(RegistryValueName)
+| extend Reason = case(
+    RegistryKey contains @"\Image File Execution Options\" and ValueName == "debugger", "Debugger set: this program runs instead of the target",
+    RegistryKey contains @"\Image File Execution Options\" and ValueName == "globalflag", "GlobalFlag set: can switch on silent exit monitoring",
+    RegistryKey contains @"\Image File Execution Options\" and ValueName == "verifierdlls", "Verifier DLL set: the DLL loads into the target",
+    RegistryKey contains @"\SilentProcessExit\" and ValueName == "monitorprocess", "Silent exit monitor set: runs a program when the target exits",
+    "")
+| where isnotempty(Reason)
+| extend TargetProgram = extract(@"\\([^\\]+)$", 1, RegistryKey)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, TargetProgram, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

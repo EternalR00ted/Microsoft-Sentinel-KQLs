@@ -1,0 +1,12 @@
+let lookback = 30d;
+let max_devices = 3;
+DeviceRegistryEvents
+| where Timestamp > ago(lookback)
+| where ActionType in ("RegistryKeyCreated", "RegistryValueSet")
+| where RegistryKey has "Addins"
+| where RegistryKey matches regex @"(?i)\\Microsoft\\Office\\(\d+\.\d+\\)?(Word|Excel|PowerPoint|Outlook|Access|Visio|Project|OneNote)\\Addins\\[^\\]+$"
+| extend App = extract(@"(?i)\\(Word|Excel|PowerPoint|Outlook|Access|Visio|Project|OneNote)\\Addins\\", 1, RegistryKey)
+| extend AddinId = tolower(extract(@"(?i)\\Addins\\([^\\]+)$", 1, RegistryKey))
+| summarize Devices = dcount(DeviceId), DeviceNames = make_set(DeviceName, 10), Writers = make_set(InitiatingProcessFileName, 5), Values = make_set(strcat(RegistryValueName, "=", RegistryValueData), 10), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by App, AddinId
+| where Devices <= max_devices
+| order by Devices asc, LastSeen desc

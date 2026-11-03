@@ -1,0 +1,24 @@
+DeviceEvents
+| where ActionType in ("ScheduledTaskCreated", "ScheduledTaskUpdated")
+| extend AF = parse_json(AdditionalFields)
+| extend TaskName = tostring(AF.TaskName)
+| extend TaskContent = parse_json(tostring(AF.TaskContent))
+| extend Exec = parse_json(tostring(parse_json(tostring(TaskContent.Actions)).Exec))
+| extend Command = tostring(Exec.Command), Arguments = tostring(Exec.Arguments)
+| extend RunAs = tostring(parse_json(tostring(parse_json(tostring(TaskContent.Principals)).Principal)).UserId)
+| extend ActionsText = tolower(tostring(TaskContent.Actions))
+| extend TaskText = iif(isnotempty(ActionsText), ActionsText, tolower(tostring(AF.TaskContent)))
+| extend Reason = case(
+    TaskText matches regex @"\b(powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msbuild|installutil|regasm|regsvcs|cmstp|odbcconf|forfiles|pcalua)(\.exe)?\b", "Task runs a script host or a proxy binary",
+    TaskText matches regex @"\bcmd(\.exe)?\b", "Task runs cmd.exe or a .cmd script",
+    TaskText matches regex @"\bconhost(\.exe)?\b.{0,40}--headless", "Task runs a hidden console host",
+    TaskText matches regex @"\.(ps1|vbs|vbe|js|jse|wsf|wsh|hta|bat|scr|jar)\b", "Task runs a script file",
+    TaskText contains "http://" or TaskText contains "https://", "Task command contains a URL",
+    TaskText matches regex @"(\\+users\\+|%(localappdata|appdata|temp|tmp|userprofile|public)%|\\+windows\\+temp\\+|\\+perflogs\\+|\\+programdata\\+[^\\""]+\.(exe|dll)\b)", "Task runs a program from a user-writable folder",
+    "")
+| where isnotempty(Reason)
+| extend Writer = tolower(InitiatingProcessFileName), WriterPath = tolower(InitiatingProcessFolderPath)
+| extend IsWindowsServicing = TaskName startswith @"\Microsoft\" and InitiatingProcessAccountSid == "S-1-5-18" and ((Writer in ("mousocoreworker.exe", "usoclient.exe") and WriterPath matches regex @"^c:\\windows\\system32(\\[^\\]+\.exe)?$") or (Writer == "tiworker.exe" and WriterPath matches regex @"^c:\\windows\\winsxs\\[^\\]+(\\[^\\]+\.exe)?$") or (Writer == "trustedinstaller.exe" and WriterPath matches regex @"^c:\\windows\\servicing(\\[^\\]+\.exe)?$") or (Writer in ("setuphost.exe", "setupplatform.exe") and WriterPath matches regex @"^c:\\\$windows\.~bt\\sources(\\[^\\]+\.exe)?$"))
+| extend IsOneDriveUpdater = TaskName startswith @"\OneDrive " and tolower(Command) matches regex @"^""?(%localappdata%|c:\\users\\[^\\]+\\appdata\\local)\\microsoft\\onedrive\\(onedrivestandaloneupdater|onedrivelauncher|onedrive)\.exe""?$"
+| where IsWindowsServicing == false and IsOneDriveUpdater == false
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, TaskName, Command, Arguments, RunAs, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId, AdditionalFields
