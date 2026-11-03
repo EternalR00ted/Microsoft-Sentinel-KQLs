@@ -1,0 +1,34 @@
+// Recon tool run with lookalike characters
+//
+// Fires when a built-in recon tool runs with characters outside Latin-1 in its command line.
+// ArgFuscator found that nltest, wmic, ipconfig, netstat, route and AdFind accept lookalikes,
+// like a fullwidth letter or a Unicode slash. So "nltest /ｄomain_trusts" still works and
+// walks right past rules that match plain text. French accents like é, à and ç are inside
+// Latin-1 and don't trigger it.
+//
+// Runs:      Continuous (NRT)
+// Severity:  High
+// MITRE:     T1027.010
+// Tables:    DeviceProcessEvents
+// Custom details: AccountName, FileName
+//
+// Needs:
+//   - Nothing beyond Defender for Endpoint.
+//
+// Heads up: a command pasted from Word or Outlook can carry a smart quote or an en dash and
+// will fire. It's easy to spot in the command line. Names outside Latin-1 fire too, like a
+// Cyrillic, Greek, Polish or Turkish group name. If your directory uses those, exclude the
+// names or skip this rule.
+//
+// Triage (paste into Recommended actions):
+//   - Look at the command line for the odd characters.
+//   - Escalate if they're lookalike letters or slashes. Nobody types those by accident.
+//   - Close if it's a smart quote or dash pasted from a document.
+//
+// Based on: ArgFuscator's models for nltest, wmic, ipconfig, netstat, route and adfind.
+
+DeviceProcessEvents
+| where ingestion_time() > ago(1d)
+| where FileName matches regex @'(?i)^(?:net1?|nltest|whoami|ipconfig|netstat|route|arp|nbtstat|systeminfo|hostname|tasklist|query|quser|qwinsta|qprocess|wmic|nslookup|cmdkey|klist|setspn|dsquery|gpresult|adfind)\.exe$' or ProcessVersionInfoOriginalFileName matches regex @'(?i)^(?:net1?|nltestrk|whoami|ipconfig|netstat|sysinfo|tasklist|quser|qwinsta|wmic|nslookup|cmdkey|setspn|dsquery|gprslt|adfind)\.exe(?:\.mui)?$'
+| where ProcessCommandLine matches regex @'[^\x00-\xff]'
+| project Timestamp, ReportId, DeviceId, DeviceName, AccountDomain, AccountName, AccountSid, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
