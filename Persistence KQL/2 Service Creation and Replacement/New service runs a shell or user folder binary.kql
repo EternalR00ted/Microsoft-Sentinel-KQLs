@@ -1,0 +1,15 @@
+DeviceEvents
+| where ActionType == "ServiceInstalled"
+| extend AF = parse_json(AdditionalFields)
+| extend ServiceName = tostring(AF.ServiceName), ServiceType = tostring(AF.ServiceType), ServiceStartType = tostring(AF.ServiceStartType), ServiceAccount = tostring(AF.ServiceAccount)
+| extend ServiceFile = tolower(FileName), ServicePath = tolower(strcat(FolderPath, "\\", FileName))
+| extend ServiceCommand = tolower(strcat(FolderPath, "\\", FileName, " ", ProcessCommandLine, " ", AdditionalFields))
+| extend Reason = case(
+    ServiceFile in ("cmd.exe", "powershell.exe", "pwsh.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "wscript.exe", "cscript.exe", "certutil.exe", "bitsadmin.exe") or ServiceCommand matches regex @"(%comspec%|\bcmd(\.exe)?""?(\s+/[a-z]+)*\s+/[ckr]\b|\bpowershell|\bpwsh|\bmshta|\brundll32|\bregsvr32|\bwscript|\bcscript|\bcertutil|\bbitsadmin|\bconhost(\.exe)?""?\s+--headless)", "Service runs a shell, script host or proxy binary",
+    ServiceCommand matches regex @"(\\+%computername%\\+|\\+127\.0\.0\.1\\+|\\+localhost\\+|__output)", "Service writes to a local admin share, typical of remote execution tools",
+    ServiceCommand matches regex @"(\\+users\\+|\\+windows\\+temp\\+|\\+perflogs\\+|\\+\$recycle\.bin\\+|\\+programdata\\+[^\\ ""]+\.(exe|dll|sys)\b|\b[a-z]:\\+temp\\+)", "Service binary in a user-writable folder",
+    tolower(ServiceName) matches regex @"^(psexesvc|paexec|remcomsvc|csexecsvc)", "Service name of a remote execution tool",
+    ServicePath matches regex @"^""?c:\\+windows\\+[^\\]+\.exe(\\+[^\\]+\.exe)?$" or ServiceCommand matches regex @"(%systemroot%|%windir%)\\+[^\\ ""]+\.exe\b", "Service binary in the root of the Windows folder, typical of Impacket psexec",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, ServiceName, ServiceType, ServiceStartType, ServiceAccount, FileName, FolderPath, ProcessCommandLine, SHA1, AdditionalFields, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

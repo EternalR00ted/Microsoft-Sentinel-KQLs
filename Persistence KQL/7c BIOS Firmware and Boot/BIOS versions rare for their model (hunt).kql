@@ -1,0 +1,29 @@
+let max_share_pct = 5.0;
+let max_devices = 2;
+let Hardware = DeviceTvmHardwareFirmware
+    | where ComponentType =~ "Hardware"
+    | distinct DeviceId, DeviceName, Manufacturer, ComponentName
+    | extend Model = strcat(Manufacturer, " ", ComponentName)
+    | project DeviceId, DeviceName, Model;
+let Bios = DeviceTvmHardwareFirmware
+    | where ComponentType =~ "Bios"
+    | distinct DeviceId, Manufacturer, ComponentVersion
+    | project DeviceId, BiosVendor = Manufacturer, BiosVersion = ComponentVersion;
+let Fleet = Hardware
+    | join kind=inner Bios on DeviceId
+    | project DeviceId, DeviceName, Model, BiosVendor, BiosVersion;
+Fleet
+| summarize DevicesOnVersion = dcount(DeviceId), DeviceNames = make_set(DeviceName, 20) by Model, BiosVendor, BiosVersion
+| join kind=inner (
+    Fleet
+    | summarize DevicesOnModel = dcount(DeviceId), VersionsOnModel = dcount(BiosVersion) by Model
+    ) on Model
+| join kind=inner (
+    Fleet
+    | summarize DevicesPerVersion = dcount(DeviceId) by Model, BiosVersion
+    | summarize MostCommonVersionDevices = max(DevicesPerVersion) by Model
+    ) on Model
+| extend ShareOfModelPct = round(100.0 * DevicesOnVersion / DevicesOnModel, 1)
+| where VersionsOnModel > 1 and DevicesOnVersion < MostCommonVersionDevices and (ShareOfModelPct < max_share_pct or DevicesOnVersion <= max_devices)
+| project Model, BiosVendor, BiosVersion, DevicesOnVersion, DevicesOnModel, VersionsOnModel, MostCommonVersionDevices, ShareOfModelPct, DeviceNames
+| order by ShareOfModelPct asc, Model asc

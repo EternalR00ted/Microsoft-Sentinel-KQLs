@@ -1,0 +1,58 @@
+let lookback = 7d;
+let RegistryAreas = DeviceRegistryEvents
+    | where Timestamp > ago(lookback)
+    | where RegistryKey has_any ("Run", "RunOnce", "RunOnceEx", "Services", "TaskCache", "Winlogon", "Execution", "SilentProcessExit", "Office", "Environment", "Lsa", "DeviceGuard", "Config", "NetSh", "Print", "TimeProviders", "Session", "Shell", "Processor", "Setup", "SafeBoot", "NetworkProvider", "SecurityProviders", "Terminal", "BootVerificationProgram") or PreviousRegistryKey has_any ("Run", "RunOnce", "RunOnceEx", "Services", "TaskCache", "Winlogon", "Execution", "SilentProcessExit", "Office", "Environment", "Lsa", "DeviceGuard", "Config", "NetSh", "Print", "TimeProviders", "Session", "Shell", "Processor", "Setup", "SafeBoot", "NetworkProvider", "SecurityProviders", "Terminal", "BootVerificationProgram")
+        or RegistryValueName in~ ("AppInit_DLLs", "LoadAppInit_DLLs") or PreviousRegistryValueName in~ ("AppInit_DLLs", "LoadAppInit_DLLs")
+    | extend Key = tolower(iif(ActionType in ("RegistryKeyDeleted", "RegistryValueDeleted") and isnotempty(PreviousRegistryKey), PreviousRegistryKey, RegistryKey))
+    | extend Area = case(
+        Key matches regex @"\\currentversion\\(run|runonce|runservices|runservicesonce|policies\\explorer\\run)$" or Key contains @"\currentversion\runonceex\", "Run keys",
+        Key matches regex @"\\(currentcontrolset|controlset\d{3})\\services\\[^\\]+(\\parameters)?$", "Service keys",
+        Key contains @"\schedule\taskcache\", "Scheduled task registry cache",
+        Key endswith @"\winlogon", "Winlogon",
+        Key contains @"\winlogon\notify\" or Key contains @"\winlogon\gpextensions\", "Winlogon notify and Group Policy extensions",
+        Key contains @"\image file execution options\", "Image File Execution Options",
+        Key contains @"\silentprocessexit\", "Silent process exit",
+        Key contains @"\microsoft\office", "Office keys",
+        Key endswith @"\environment", "Environment keys",
+        Key matches regex @"\\control\\lsa(\\osconfig)?$", "LSA",
+        Key contains "deviceguard" or Key endswith @"\control\ci\config", "Device Guard and driver blocklist",
+        Key endswith @"\microsoft\windows nt\currentversion\windows", "AppInit and legacy Load or Run",
+        Key contains @"\control\session manager", "Session Manager (BootExecute, AppCert, KnownDLLs)",
+        Key contains @"\control\print\", "Print monitors, processors and providers",
+        Key matches regex @"\\microsoft\\netsh$", "Netsh helpers",
+        Key contains @"\w32time\timeproviders\", "Time providers",
+        Key matches regex @"\\explorer\\(user shell folders|shell folders)$", "Startup folder location",
+        Key endswith @"\command processor", "cmd.exe AutoRun",
+        Key contains @"\active setup\installed components\", "Active Setup",
+        Key endswith @"\control\safeboot", "Safe Mode shell",
+        Key contains "networkprovider", "Network providers",
+        Key endswith @"\control\securityproviders", "Security providers",
+        Key contains @"\terminal server\wds\rdpwd" or Key contains @"\terminal server\winstations\rdp-tcp", "RDP initial program",
+        Key endswith @"\control\bootverificationprogram", "Boot verification program",
+        "")
+    | where isnotempty(Area)
+    | extend Source = "DeviceRegistryEvents"
+    | summarize Events = count(), Deletes = countif(ActionType endswith "Deleted"), Devices = dcount(DeviceId), LastSeen = max(Timestamp) by Source, Area;
+let DeviceEventTypes = DeviceEvents
+    | where Timestamp > ago(lookback)
+    | where ActionType in ("ServiceInstalled", "ScheduledTaskCreated", "ScheduledTaskUpdated", "WmiBindEventFilterToConsumer", "DriverLoad", "PowerShellCommand")
+    | extend Source = "DeviceEvents", Area = ActionType
+    | summarize Events = count(), Devices = dcount(DeviceId), LastSeen = max(Timestamp) by Source, Area;
+let FileAreas = DeviceFileEvents
+    | where Timestamp > ago(lookback)
+    | where FolderPath has_any ("Startup", "GroupPolicy", "XLSTART", "AddIns")
+    | extend Path = tolower(FolderPath)
+    | extend Area = case(
+        Path contains @"\start menu\programs\startup", "Startup folders",
+        Path contains @"\grouppolicy", "Local Group Policy folders",
+        Path contains @"\microsoft\word\startup" or Path contains @"\microsoft\excel\xlstart" or Path contains @"\microsoft\addins", "Office startup folders",
+        "")
+    | where isnotempty(Area)
+    | extend Source = "DeviceFileEvents"
+    | summarize Events = count(), Deletes = countif(ActionType startswith "FileDeleted"), Devices = dcount(DeviceId), LastSeen = max(Timestamp) by Source, Area;
+let ImageLoads = DeviceImageLoadEvents
+    | where Timestamp > ago(1d)
+    | extend Source = "DeviceImageLoadEvents (last day)", Area = "All image loads"
+    | summarize Events = count(), Devices = dcount(DeviceId), LastSeen = max(Timestamp) by Source, Area;
+union RegistryAreas, DeviceEventTypes, FileAreas, ImageLoads
+| order by Source asc, Area asc

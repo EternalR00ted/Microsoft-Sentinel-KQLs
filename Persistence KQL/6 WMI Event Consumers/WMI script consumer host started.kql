@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where FileName =~ "scrcons.exe" or ProcessVersionInfoOriginalFileName =~ "scrcons.exe" or InitiatingProcessFileName =~ "scrcons.exe"
+| extend Reason = iif(InitiatingProcessFileName =~ "scrcons.exe", "Process started by the WMI script consumer host", "WMI script consumer host started")
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, ProcessCommandLine, SHA1, AccountName, AccountSid, AccountUpn, AccountObjectId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessParentFileName

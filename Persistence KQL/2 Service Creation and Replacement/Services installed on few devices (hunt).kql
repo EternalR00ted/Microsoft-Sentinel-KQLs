@@ -1,0 +1,15 @@
+let lookback = 30d;
+let max_devices = 3;
+DeviceEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "ServiceInstalled"
+| extend AF = parse_json(AdditionalFields)
+| extend ServiceName = tostring(AF.ServiceName), ServiceAccount = tostring(AF.ServiceAccount), ServiceStartType = tostring(AF.ServiceStartType)
+| extend ServiceKey = tolower(strcat(ServiceName, " | ", FolderPath))
+| extend ServiceKey = replace_regex(ServiceKey, @"c:\\users\\[^\\]+\\", "<userdir>")
+| extend ServiceKey = replace_regex(ServiceKey, @"\{[0-9a-f-]{36}\}", "<guid>")
+| extend ServiceKey = replace_regex(ServiceKey, @"\d+(\.\d+){1,3}", "<ver>")
+| extend ServiceKey = replace_regex(ServiceKey, @"_[0-9a-f]{4,8}( |$)", "_<id> ")
+| summarize Devices = dcount(DeviceId), DeviceNames = make_set(DeviceName, 10), Installers = make_set(InitiatingProcessFileName, 5), Accounts = make_set(ServiceAccount, 3), StartTypes = make_set(ServiceStartType, 3), SHA1s = make_set(SHA1, 5), Examples = make_set(FolderPath, 3), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by ServiceKey
+| where Devices <= max_devices
+| order by Devices asc, LastSeen desc

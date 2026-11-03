@@ -1,0 +1,20 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey contains @"\CurrentVersion\Run" or RegistryKey contains @"\Policies\Explorer\Run"
+| where RegistryKey matches regex @"(?i)\\CurrentVersion\\(Run|RunOnce|RunServices|RunServicesOnce|Policies\\Explorer\\Run)$"
+    or RegistryKey contains @"\CurrentVersion\RunOnceEx\"
+| where RegistryKey !contains @"\ClickToRun\REGISTRY\" and RegistryKey !contains @"\ClickToRunStore\"
+| extend ValueData = tolower(RegistryValueData)
+| extend Reason = case(
+    ValueData matches regex @"\b(powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msbuild|installutil|regasm|regsvcs|cmstp|odbcconf|forfiles|pcalua|hh)(\.exe)?\b", "Runs a script host or a proxy binary",
+    ValueData matches regex @"\bcmd(\.exe)?""?(\s+/[a-z]+)*\s+/[ckr]\b", "Runs cmd.exe with a command",
+    ValueData matches regex @"\bconhost(\.exe)?""?\s+--headless\b", "Runs a hidden console host",
+    ValueData matches regex @"\.(ps1|vbs|vbe|js|jse|wsf|wsh|hta|bat|cmd|scr|pif|jar)\b", "Points at a script file",
+    ValueData matches regex @"\\(appdata\\local\\temp|windows\\temp|users\\public|downloads|perflogs|\$recycle\.bin)\\", "Points at a temp, public or downloads folder",
+    ValueData matches regex @"\\programdata\\[^\\]+\.(exe|dll|com)\b", "Points at a file in the root of ProgramData",
+    ValueData contains "http://" or ValueData contains "https://", "Contains a URL",
+    "")
+| where isnotempty(Reason)
+| extend IsCleanup = ValueData matches regex @"\bcmd(\.exe)?""?(\s+/[a-z]+)+\s+""?(del|rd|rmdir)\s" and ValueData !contains "&" and ValueData !contains "|"
+| where IsCleanup == false
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

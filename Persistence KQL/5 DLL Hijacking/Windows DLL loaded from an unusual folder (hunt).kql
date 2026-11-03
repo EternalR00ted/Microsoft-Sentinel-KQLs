@@ -1,0 +1,13 @@
+let lookback = 14d;
+let HijackableDlls = dynamic(["version.dll", "cryptbase.dll", "netutils.dll", "sspicli.dll", "logoncli.dll", "userenv.dll", "propsys.dll", "iphlpapi.dll", "srvcli.dll", "winsta.dll", "uxtheme.dll", "devobj.dll", "samcli.dll", "dnsapi.dll", "bcd.dll", "winhttp.dll", "mpr.dll", "dui70.dll", "ntdsapi.dll", "wtsapi32.dll", "dsrole.dll", "netapi32.dll", "wininet.dll", "credui.dll", "dwmapi.dll", "dwrite.dll", "secur32.dll", "wkscli.dll", "vssapi.dll", "fltlib.dll", "profapi.dll", "oleacc.dll", "wevtapi.dll", "duser.dll", "edputil.dll", "wer.dll", "winmm.dll", "cryptsp.dll", "ncrypt.dll", "ktmw32.dll", "activeds.dll", "urlmon.dll", "msi.dll", "umpdc.dll", "policymanager.dll", "iertutil.dll", "xmllite.dll", "mpclient.dll", "mpsvc.dll"]);
+let PhantomDlls = dynamic(["axeonoffhelper.dll", "cdpsgshims.dll", "mstracer.dll", "offdmpsvc.dll", "shellchromeapi.dll", "tsmsisrv.dll", "tsvipsrv.dll", "wlbsctrl.dll", "wow64log.dll", "wptsextensions.dll"]);
+DeviceImageLoadEvents
+| where Timestamp > ago(lookback)
+| where FileName in~ (HijackableDlls) or FileName in~ (PhantomDlls) or FileName =~ "oci.dll"
+| extend DllName = tolower(FileName), LowerPath = tolower(FolderPath)
+| extend IsPhantom = DllName in (PhantomDlls) or (DllName == "oci.dll" and LowerPath matches regex @"^c:\\windows(\\|$)")
+| extend InSystemHome = LowerPath matches regex @"^c:\\windows\\(system32|syswow64|winsxs)(\\|$)"
+| extend InDefenderHome = DllName in ("mpclient.dll", "mpsvc.dll") and LowerPath matches regex @"^c:\\(program files( \(x86\))?\\windows defender|programdata\\microsoft\\windows defender\\platform)(\\|$)"
+| where IsPhantom or (DllName in (HijackableDlls) and InSystemHome == false and InDefenderHome == false)
+| summarize Loads = count(), Devices = dcount(DeviceId), DeviceNames = make_set(DeviceName, 10), LoadedBy = make_set(InitiatingProcessFolderPath, 10), SHA1s = make_set(SHA1, 5), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by DllName, DllPath = LowerPath, IsPhantom
+| order by IsPhantom desc, Devices asc, LastSeen desc

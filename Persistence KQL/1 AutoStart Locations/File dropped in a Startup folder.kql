@@ -1,0 +1,14 @@
+DeviceFileEvents
+| where ActionType startswith "FileCreated" or ActionType startswith "FileRenamed" or ActionType startswith "FileModified"
+| where FolderPath contains @"\Start Menu\Programs\Startup"
+| extend FileLower = tolower(FileName)
+| where FileLower != "desktop.ini"
+| extend Extension = extract(@"\.([a-z0-9]+)$", 1, FileLower)
+| extend Writer = tolower(InitiatingProcessFileName)
+| extend Reason = case(
+    Extension !in ("lnk", "url"), "Program or script placed in a Startup folder",
+    Writer in ("powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "msedge.exe", "chrome.exe", "firefox.exe"), "Shortcut placed in a Startup folder by a script host, Office or a browser",
+    InitiatingProcessFolderPath matches regex @"(?i)\\(appdata\\(local|roaming)|windows\\temp|users\\public|downloads)(\\|$)", "Shortcut placed in a Startup folder by a program running from AppData, temp, Public or Downloads",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, SHA1, FileOriginUrl, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

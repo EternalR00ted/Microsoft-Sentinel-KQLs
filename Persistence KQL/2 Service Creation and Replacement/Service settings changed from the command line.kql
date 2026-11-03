@@ -1,0 +1,16 @@
+DeviceProcessEvents
+| where ProcessCommandLine contains "binpath" or ProcessCommandLine contains "failure" or ProcessCommandLine contains "ImagePath" or ProcessCommandLine contains "ServiceDll" or ProcessCommandLine contains "FailureCommand" or ProcessCommandLine contains "BinaryPathName"
+| extend Cmd = tolower(ProcessCommandLine), Tool = tolower(FileName), OrigName = tolower(ProcessVersionInfoOriginalFileName)
+| extend IsSc = Tool == "sc.exe" or OrigName == "sc.exe"
+| extend IsReg = Tool == "reg.exe" or OrigName == "reg.exe"
+| extend IsPowerShell = Tool in ("powershell.exe", "pwsh.exe") or OrigName in ("powershell.exe", "pwsh.dll")
+| extend Reason = case(
+    IsSc and Cmd has "failure" and Cmd contains "command=", "sc.exe sets a program to run when a service fails",
+    IsSc and Cmd has "config" and Cmd contains "binpath=", "sc.exe changes the binary path of an existing service",
+    IsSc and Cmd has "create" and Cmd contains "binpath=" and Cmd matches regex @"(%comspec%|\bcmd(\.exe)?""?(\s+/[a-z]+)*\s+/[ckr]\b|\bpowershell|\bpwsh|\bmshta|\brundll32|\bregsvr32|\bwscript|\bcscript|\\users\\|\\windows\\temp\\|\\perflogs\\|\\programdata\\[^\\]+\.(exe|dll)\b)", "sc.exe creates a service that runs a shell or a user folder program",
+    IsReg and Cmd has "add" and Cmd contains @"\services\" and Cmd matches regex @"\b(imagepath|servicedll|failurecommand)\b", "reg.exe writes ImagePath, ServiceDll or FailureCommand",
+    IsPowerShell and Cmd contains @"\services\" and Cmd matches regex @"\b(imagepath|servicedll|failurecommand)\b", "PowerShell writes ImagePath, ServiceDll or FailureCommand",
+    IsPowerShell and Cmd matches regex @"\b(new-service|set-service)\b" and Cmd contains "-binarypathname", "PowerShell creates or changes a service binary path",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, ProcessCommandLine, SHA1, AccountName, AccountSid, AccountUpn, AccountObjectId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessParentFileName

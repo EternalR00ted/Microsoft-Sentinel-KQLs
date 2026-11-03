@@ -1,0 +1,18 @@
+DeviceFileEvents
+| where ActionType startswith "FileCreated" or ActionType startswith "FileRenamed" or ActionType startswith "FileModified"
+| where FolderPath contains @"\Microsoft\" or FolderPath contains @"\Microsoft Office\" or FileName endswith ".otm" or FileName endswith ".dotm"
+| extend LowerPath = tolower(FolderPath), LowerName = tolower(FileName), Writer = tolower(InitiatingProcessFileName), WriterPath = tolower(InitiatingProcessFolderPath)
+| where LowerName != "desktop.ini"
+| extend IsExcelOwnFile = Writer == "excel.exe" and LowerPath contains @"\microsoft\excel\xlstart" and (LowerName in ("personal.xlsb", "~$personal.xlsb", "book.xltx", "book.xltm", "sheet.xltx", "sheet.xltm") or LowerName matches regex @"^[0-9a-f]{8}$")
+| extend IsOfficeUpdate = Writer == "officeclicktorun.exe" and WriterPath matches regex @"^c:\\program files( \(x86\))?\\common files\\microsoft shared\\clicktorun(\\updates\\[^\\]+)?(\\[^\\]+\.exe)?$"
+| where IsExcelOwnFile == false and IsOfficeUpdate == false
+| extend Reason = case(
+    LowerPath contains @"\microsoft\word\startup", "File in the Word startup folder: loads every time Word starts",
+    LowerPath contains @"\microsoft\excel\xlstart", "File in the Excel XLSTART folder: opens every time Excel starts",
+    LowerPath matches regex @"\\microsoft office\\(root\\)?office\d+\\(startup|xlstart)(\\|$)", "File in an Office program startup folder",
+    LowerPath contains @"\microsoft\addins" and LowerName matches regex @"\.(xll|xla|xlam|ppa|ppam|wll|dll)$", "Add-in file placed in the Office AddIns folder",
+    LowerName == "vbaproject.otm" and Writer != "outlook.exe", "Outlook VBA project written by something other than Outlook",
+    LowerName in ("normal.dotm", "normalemail.dotm") and Writer !in ("winword.exe", "outlook.exe"), "Word or Outlook global template changed outside Office",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, SHA1, FileOriginUrl, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

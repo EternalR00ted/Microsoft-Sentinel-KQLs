@@ -1,0 +1,15 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey contains @"\Outlook"
+| where RegistryKey contains @"\Microsoft\Office\"
+| extend Key = tolower(RegistryKey), ValueName = tolower(RegistryValueName), Data = tolower(RegistryValueData)
+| extend IsOne = Data in ("1", "0x1", "0x00000001")
+| extend IsZero = Data in ("0", "0x0", "0x00000000", "")
+| extend Reason = case(
+    Key endswith @"\outlook" and ValueName == "loadmacroprovideronboot" and IsZero == false, "Outlook set to load its VBA project at startup",
+    Key endswith @"\outlook\security" and ValueName == "level" and IsOne, "Outlook macros set to run with no warning",
+    (Key contains @"\outlook\webview\" or Key contains @"\outlook\today") and ValueName == "url" and (Data contains "://" or Data matches regex @"([a-z]:\\|\\\\)"), "Outlook folder home page set: the page loads when the folder opens",
+    Key endswith @"\outlook\security" and ValueName in ("enableroamingfolderhomepages", "nondefaultstorescript") and IsZero == false, "Outlook folder home pages switched back on",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

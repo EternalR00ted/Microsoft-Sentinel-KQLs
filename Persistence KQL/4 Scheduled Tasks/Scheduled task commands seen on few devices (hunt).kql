@@ -1,0 +1,19 @@
+let lookback = 30d;
+let max_devices = 3;
+DeviceEvents
+| where Timestamp > ago(lookback)
+| where ActionType in ("ScheduledTaskCreated", "ScheduledTaskUpdated")
+| extend AF = parse_json(AdditionalFields)
+| extend TaskName = tostring(AF.TaskName)
+| extend TaskContent = parse_json(tostring(AF.TaskContent))
+| extend Exec = parse_json(tostring(parse_json(tostring(TaskContent.Actions)).Exec))
+| extend Command = tostring(Exec.Command), Arguments = tostring(Exec.Arguments)
+| extend TaskKey = tolower(iif(isnotempty(Command), strcat(Command, " ", Arguments), tostring(AF.TaskContent)))
+| extend TaskKey = replace_regex(TaskKey, @"s-1-(5|12)-[0-9-]+", "<sid>")
+| extend TaskKey = replace_regex(TaskKey, @"c:\\+users\\+[^\\]+\\+", "<userdir>")
+| extend TaskKey = replace_regex(TaskKey, @"\{[0-9a-f-]{36}\}", "<guid>")
+| extend TaskKey = replace_regex(TaskKey, @"\d+(\.\d+){1,3}", "<ver>")
+| extend TaskNameKey = replace_regex(tolower(TaskName), @"s-1-(5|12)-[0-9-]+", "<sid>")
+| summarize Devices = dcount(DeviceId), DeviceNames = make_set(DeviceName, 10), TaskNames = make_set(TaskNameKey, 5), Creators = make_set(InitiatingProcessFileName, 5), Examples = make_set(strcat(Command, " ", Arguments), 3), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by TaskKey
+| where Devices <= max_devices
+| order by Devices asc, LastSeen desc

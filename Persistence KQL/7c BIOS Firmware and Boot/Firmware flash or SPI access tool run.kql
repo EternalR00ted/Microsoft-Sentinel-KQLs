@@ -1,0 +1,14 @@
+DeviceProcessEvents
+| extend Name = tolower(FileName), OrigName = tolower(ProcessVersionInfoOriginalFileName), Cmd = tolower(ProcessCommandLine)
+| extend Reason = case(
+    Name in ("afuwin.exe", "afuwinx64.exe", "afuwin64.exe", "afuwingui.exe", "afuwinguix64.exe") or OrigName in ("afuwin.exe", "afuwinx64.exe", "afuwin64.exe", "afuwingui.exe", "afuwinguix64.exe"), "AMI firmware update tool (AFU)",
+    Name in ("fptw.exe", "fptw64.exe") or OrigName in ("fptw.exe", "fptw64.exe"), "Intel Flash Programming Tool (FPT)",
+    Name in ("h2offt-w.exe", "h2offt-wx64.exe", "insydeflash.exe") or OrigName in ("h2offt-w.exe", "h2offt-wx64.exe", "insydeflash.exe"), "Insyde firmware flash tool",
+    Name == "winphlash.exe" or OrigName == "winphlash.exe", "Phoenix WinPhlash firmware tool",
+    Name == "winflash.exe" or OrigName == "winflash.exe", "ASUS WinFlash BIOS tool",
+    Name in ("rw.exe", "rweverything.exe") or OrigName == "rw.exe", "RWEverything raw hardware read and write tool",
+    Name == "flashrom.exe" or OrigName == "flashrom.exe", "flashrom firmware tool",
+    Cmd contains "chipsec_main" or Cmd contains "chipsec_util", "CHIPSEC firmware framework",
+    "")
+| where isnotempty(Reason)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, ProcessCommandLine, SHA1, ProcessVersionInfoCompanyName, ProcessVersionInfoProductName, AccountName, AccountSid, AccountUpn, AccountObjectId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine

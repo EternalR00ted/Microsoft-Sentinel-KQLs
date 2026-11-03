@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "gpscript.exe"
+| where FileName !~ "conhost.exe"
+| extend Cmd = tolower(ProcessCommandLine)
+| extend IsDomainScript = Cmd matches regex @"\\\\[^\\]+\\(sysvol|netlogon)\\" and Cmd !contains @"\grouppolicy\"
+| where IsDomainScript == false
+| extend Reason = strcat("Group Policy script ran from outside SYSVOL or NETLOGON: ", FileName)
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, FileName, FolderPath, ProcessCommandLine, SHA1, AccountName, AccountSid, AccountUpn, AccountObjectId, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName

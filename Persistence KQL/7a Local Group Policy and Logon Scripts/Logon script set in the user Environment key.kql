@@ -1,0 +1,7 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryValueName =~ "UserInitMprLogonScript"
+| where RegistryKey endswith @"\Environment"
+| where isnotempty(RegistryValueData)
+| extend Reason = "Logon script set in UserInitMprLogonScript"
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

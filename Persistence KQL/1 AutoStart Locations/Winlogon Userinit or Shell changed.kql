@@ -1,0 +1,15 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey endswith @"\Microsoft\Windows NT\CurrentVersion\Winlogon"
+| where RegistryKey !contains @"\ClickToRun\REGISTRY\" and RegistryKey !contains @"\ClickToRunStore\"
+| extend ValueName = tolower(RegistryValueName), ValueData = tolower(RegistryValueData)
+| where ValueName in ("userinit", "shell", "taskman", "appsetup", "vmapplet")
+| extend IsDefault = case(
+    ValueName == "userinit", ValueData in (@"c:\windows\system32\userinit.exe,", @"c:\windows\system32\userinit.exe", "userinit.exe,", "userinit.exe"),
+    ValueName == "shell", ValueData in ("explorer.exe", @"c:\windows\explorer.exe"),
+    ValueName == "appsetup", ValueData in ("usrlogon.cmd"),
+    ValueName == "vmapplet", ValueData in ("systempropertiesperformance.exe /pagefile", @"rundll32 shell32,control_rundll ""sysdm.cpl"""),
+    false)
+| where IsDefault == false
+| extend Reason = strcat("Winlogon ", RegistryValueName, " set to a non-default value")
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, Reason, RegistryKey, RegistryValueName, RegistryValueData, PreviousRegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessParentFileName, InitiatingProcessAccountName, InitiatingProcessAccountSid, InitiatingProcessAccountUpn, InitiatingProcessAccountObjectId

@@ -1,0 +1,22 @@
+let lookback = 30d;
+let recent = 7d;
+let ServiceBinaries = DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where InitiatingProcessFileName =~ "services.exe"
+    | where FileName endswith ".exe"
+    | extend LowerPath = tolower(FolderPath), LowerName = tolower(FileName)
+    | extend PathHasName = strlen(LowerPath) >= strlen(LowerName) and substring(LowerPath, strlen(LowerPath) - strlen(LowerName)) == LowerName
+    | extend BinaryPath = iif(PathHasName, LowerPath, strcat(LowerPath, iif(LowerPath endswith @"\", "", @"\"), LowerName))
+    | distinct DeviceId, BinaryPath;
+DeviceFileEvents
+| where Timestamp > ago(recent)
+| where ActionType startswith "FileCreated" or ActionType startswith "FileModified" or ActionType startswith "FileRenamed"
+| where FileName endswith ".exe"
+| extend LowerPath = tolower(FolderPath), LowerName = tolower(FileName)
+| extend PathHasName = strlen(LowerPath) >= strlen(LowerName) and substring(LowerPath, strlen(LowerPath) - strlen(LowerName)) == LowerName
+| extend BinaryPath = iif(PathHasName, LowerPath, strcat(LowerPath, iif(LowerPath endswith @"\", "", @"\"), LowerName))
+| join kind=inner ServiceBinaries on DeviceId, BinaryPath
+| extend Writer = tolower(InitiatingProcessFileName)
+| where Writer !in ("msiexec.exe", "tiworker.exe", "trustedinstaller.exe", "services.exe", "svchost.exe", "msmpeng.exe", "mpsigstub.exe", "mpcmdrun.exe", "updater.exe", "googleupdate.exe", "microsoftedgeupdate.exe", "onedrivesetup.exe")
+| project Timestamp, DeviceId, DeviceName, ReportId, ActionType, ServiceBinary = BinaryPath, SHA1, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, InitiatingProcessAccountName
+| order by Timestamp desc

@@ -1,0 +1,16 @@
+let lookback = 30d;
+let max_devices = 3;
+DeviceRegistryEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has_any ("Run", "RunOnce", "RunServices", "RunServicesOnce")
+| where RegistryKey matches regex @"(?i)\\CurrentVersion\\(Run|RunOnce|RunServices|RunServicesOnce|Policies\\Explorer\\Run)$"
+| where isnotempty(RegistryValueData)
+| extend Normalized = tolower(RegistryValueData)
+| extend Normalized = replace_regex(Normalized, @"c:\\users\\[^\\]+\\", "<userdir>")
+| extend Normalized = replace_regex(Normalized, @"s-1-(5|12)-[0-9-]+", "<sid>")
+| extend Normalized = replace_regex(Normalized, @"\{[0-9a-f-]{36}\}", "<guid>")
+| extend Normalized = replace_regex(Normalized, @"\d+(\.\d+){1,3}", "<ver>")
+| summarize Devices = dcount(DeviceId), DeviceNames = make_set(DeviceName, 10), ValueNames = make_set(RegistryValueName, 5), Writers = make_set(InitiatingProcessFileName, 5), Users = make_set(InitiatingProcessAccountName, 5), Examples = make_set(RegistryValueData, 3), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by Normalized
+| where Devices <= max_devices
+| order by Devices asc, LastSeen desc

@@ -1,0 +1,17 @@
+let lookback = 30d;
+let recent = 7d;
+let WindowsBinaries = DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FolderPath matches regex @"(?i)^c:\\windows\\(system32|syswow64)(\\|$)"
+    | where ProcessVersionInfoCompanyName has "Microsoft"
+    | where isnotempty(ProcessVersionInfoOriginalFileName)
+    | summarize by OriginalName = tolower(ProcessVersionInfoOriginalFileName);
+DeviceProcessEvents
+| where Timestamp > ago(recent)
+| where ProcessVersionInfoCompanyName has "Microsoft"
+| extend OriginalName = tolower(ProcessVersionInfoOriginalFileName)
+| where OriginalName in (WindowsBinaries)
+| where OriginalName !in ("dismhost.exe", "onedrivesetup.exe", "mpsigstub.exe")
+| where FolderPath matches regex @"(?i)(^[a-z]:\\(users|programdata|perflogs|temp|\$recycle\.bin)(\\|$)|\\windows\\temp(\\|$)|\\(appdata|downloads|desktop|documents)(\\|$))"
+| summarize Runs = count(), Devices = dcount(DeviceId), DeviceNames = make_set(DeviceName, 10), Paths = make_set(FolderPath, 10), Parents = make_set(InitiatingProcessFileName, 5), Users = make_set(AccountName, 5), SHA1s = make_set(SHA1, 5), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by OriginalName, FileName
+| order by Devices asc, LastSeen desc
