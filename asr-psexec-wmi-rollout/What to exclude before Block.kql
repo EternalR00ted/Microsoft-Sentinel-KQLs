@@ -1,0 +1,54 @@
+// What to exclude before setting the PsExec and WMI ASR rule to Block
+// Run in: Defender portal > Advanced hunting. Needs Defender for Endpoint Plan 2. Looks back 30 days.
+// ASR events are throttled to one per unique process per hour, so judge rows by DevicesHit and DaysSeen, not hit counts.
+// Credit: ClientMachine and IsRemoteMachine come from Fabian Bader's XDR Internals. README.md explains each verdict.
+let Lookback = 30d;
+let ShellsAndScriptEngines = dynamic(["cmd.exe", "powershell.exe", "powershell_ise.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe",
+    "python.exe", "pythonw.exe", "py.exe", "node.exe", "java.exe", "javaw.exe", "dotnet.exe", "bash.exe", "sh.exe", "wsl.exe", "perl.exe", "ruby.exe", "php.exe", "autohotkey.exe", "autoit3.exe"]);
+let MecmDevices = toscalar(DeviceProcessEvents
+    | where Timestamp > ago(Lookback)
+    | where FileName in~ ("CcmExec.exe", "CcmEval.exe") or InitiatingProcessFileName =~ "CcmExec.exe"
+    | summarize make_set(DeviceId));
+let ChildProcesses = DeviceProcessEvents
+    | where Timestamp > ago(Lookback)
+    | where InitiatingProcessFileName in~ ("WmiPrvSE.exe", "PSEXESVC.exe")
+    | extend PathKey = tolower(iff(FolderPath endswith FileName, FolderPath, strcat(FolderPath, @"\", FileName)))
+    | summarize RunAs = make_set(strcat(AccountDomain, @"\", AccountName), 5), ProcSHA1 = take_anyif(SHA1, isnotempty(SHA1)),
+                Company = take_anyif(ProcessVersionInfoCompanyName, isnotempty(ProcessVersionInfoCompanyName)) by PathKey;
+let WmiCallerInfo = DeviceEvents
+    | where Timestamp > ago(Lookback)
+    | where ActionType == "ProcessCreatedUsingWmiQuery"
+    | extend Extra = parse_json(AdditionalFields)
+    | extend ClientMachine = tostring(Extra.ClientMachine), IsRemote = tostring(Extra.IsRemoteMachine) =~ "true"
+    | summarize WmiCallers = make_set(tolower(InitiatingProcessFileName), 8),
+                RemoteCallers = make_set_if(iff(isempty(ClientMachine), "(name not recorded)", ClientMachine), IsRemote, 8) by FileKey = tolower(FileName);
+DeviceEvents
+| where Timestamp > ago(Lookback)
+| where ActionType startswith "AsrPsexecWmiChildProcess"
+| extend ExclusionPath = iff(FolderPath endswith FileName, FolderPath, strcat(FolderPath, @"\", FileName))
+| extend PathKey = tolower(ExclusionPath), OnMecmDevice = DeviceId in (MecmDevices)
+| summarize ExclusionPath = take_any(ExclusionPath), FileName = take_any(FileName),
+            DevicesHit = dcount(DeviceId), NonMecmDevices = dcountif(DeviceId, not(OnMecmDevice)), DaysSeen = dcount(bin(Timestamp, 1d)),
+            AuditHits = countif(ActionType endswith "Audited"), BlockHits = countif(ActionType endswith "Blocked"),
+            LaunchedBy = make_set(tolower(InitiatingProcessFileName), 4), SampleCommandLine = take_anyif(ProcessCommandLine, isnotempty(ProcessCommandLine)),
+            SampleDevices = make_set(DeviceName, 5), AsrSHA1 = take_anyif(SHA1, isnotempty(SHA1)), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by PathKey
+| extend FileKey = tolower(FileName)
+| join kind=leftouter ChildProcesses on PathKey
+| join kind=leftouter WmiCallerInfo on FileKey
+| extend SHA1 = coalesce(AsrSHA1, ProcSHA1)
+| invoke FileProfile("SHA1", 1000)
+| extend SigState = iff(isempty(SignatureState), "Unknown", SignatureState)
+| extend Verdict = case(
+    PathKey matches regex @"^[a-z]:\\windows\\(ccm|ccmcache|ccmsetup)\\", "Wait: MECM client file, stays in Audit until MECM is gone",
+    PathKey matches regex @"\\(users|appdata|temp|tmp)\\", "Investigate: runs from a user-writable or temp folder",
+    PathKey startswith @"\\", "Investigate: runs from a network share",
+    array_length(RemoteCallers) > 0, "Investigate: started from another machine",
+    PathKey matches regex @"^[a-z]:\\windows\\((system32|syswow64|winsxs|microsoft\.net)\\|[^\\]+$)", "Don't exclude: built-in Windows binary",
+    FileKey in~ (ShellsAndScriptEngines), "Don't exclude: shell or script engine",
+    SigState in ("Unsigned", "SignedInvalid"), "Investigate: unsigned or bad signature",
+    DevicesHit == 1 and DaysSeen <= 2, "Investigate: one device, one or two days",
+    PathKey matches regex @"^[a-z]:\\program files( \(x86\))?\\" and SigState == "SignedValid", "Exclude: add ExclusionPath to this rule's exclusions",
+    "Check: confirm the signer and folder permissions first")
+| project Verdict, ExclusionPath, DevicesHit, NonMecmDevices, DaysSeen, AuditHits, BlockHits, LaunchedBy, WmiCallers, RemoteCallers, RunAs,
+          Signer, SigState, GlobalPrevalence, Company, SampleCommandLine, SampleDevices, FirstSeen, LastSeen
+| order by NonMecmDevices desc, DevicesHit desc
