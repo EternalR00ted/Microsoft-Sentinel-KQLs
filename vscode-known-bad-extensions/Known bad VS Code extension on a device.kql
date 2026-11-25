@@ -1,6 +1,6 @@
 // Known bad VS Code extension on a device
 //
-// Fires when an extension seen on a device is on a public list of extensions that were
+// Fires when an extension seen on a device is on VSXSentry's list of extensions that were
 // pulled for cause: malware, impersonation, spam and so on. It also matches a few poisoned
 // releases of real extensions by exact version. One row per device and extension, with a
 // Tier column that says how bad the listing is.
@@ -13,12 +13,17 @@
 //
 // Needs:
 //   - Defender for Endpoint Plan 2 on the machines your developers use.
-//   - Nothing else. Defender fetches the two lists itself each time the rule runs.
+//   - Nothing else. Defender downloads the VSXSentry list itself each time the rule runs.
 //
-// Heads up: VS Code extracts an extension into a folder with a random name and renames it
-// afterwards, so the install's own file events don't carry the extension ID. This rule
-// looks in four other places. Run "Check your telemetry first (hunt).kql" before you trust
-// it. No results doesn't prove a device is clean.
+// Heads up:
+//   - This file has no blank lines, on purpose. The Defender query editor treats a blank
+//     line as the end of a query and only runs the part your cursor is in.
+//   - If the list can't be downloaded, the whole run fails. That's why this rule reads one
+//     list. The Open VSX list has its own rule in this folder.
+//   - VS Code extracts an extension into a folder with a random name and renames it
+//     afterwards, so the install's own file events don't carry the extension ID. This rule
+//     looks in four other places. Run "Check your telemetry first (hunt).kql" before you
+//     trust it. No results doesn't prove a device is clean.
 //
 // Triage (paste into Recommended actions):
 //   - Check Tier, Categories, Versions and EditorFolder. Look the ID up on the marketplace
@@ -27,12 +32,11 @@
 //     started. Plan on rotating the tokens, SSH keys and cloud keys that developer had.
 //   - Impersonation or Removed for cause: remove the extension and ask the user where it
 //     came from. Escalate if the editor started shells or scripts around the first event.
-//   - Close if it's the real extension sideloaded into a fork under a name Open VSX blocks,
-//     or if the installed version isn't the bad one.
+//   - Close if the installed version isn't the bad one.
 //
-// Based on: VSXSentry by mthcht, Microsoft's removed packages list, Open VSX's extension
-// control list and VS Code's source. README.md has the links.
-
+// Based on: VSXSentry by mthcht, Microsoft's removed packages list and VS Code's source.
+// README.md has the links.
+//
 // Tiers this copy alerts on. Save one copy per tier if you want a severity for each.
 let AlertTiers = dynamic(["Malware", "Impersonation", "Removed for cause"]);
 let Lookback = 30d;
@@ -45,7 +49,7 @@ let ExtensionPath = @"(?i)[\\/]\.?([^\\/]+)[\\/](?:data[\\/])?(?:extensions|Cach
 let StoragePath = @"(?i)[\\/]\.?([^\\/]+)[\\/](?:data[\\/])?(?:User[\\/]globalStorage|User[\\/]workspaceStorage[\\/][^\\/]+|logs[\\/][^\\/]+[\\/](?:window\d+[\\/])?exthost\d*)[\\/]([^\\/.\s]+\.[^\\/\s]+)[\\/]";
 let CliInstall = @"(?i)--install-extension[=\s]+\W?([a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*)";
 let PathTerms = dynamic(["extensions", "CachedExtensionVSIXs", "globalStorage", "workspaceStorage", "exthost", "exthost1"]);
-// VSXSentry: Microsoft's removals plus community reports. Applies to every editor.
+// VSXSentry: Microsoft's removals plus community reports. The only download in this rule.
 let VsxSentry = externaldata(
         extension_id:string, publisher_id:string, extension_name:string, metadata_comment:string,
         metadata_severity:string, metadata_category:string, metadata_source:string,
@@ -53,13 +57,6 @@ let VsxSentry = externaldata(
     [@"https://vsxsentry.github.io/feeds/vsxsentry_malicious_feed.csv"]
     with (format="csv", ignoreFirstRecord=true)
     | project MatchKey = tolower(extension_id), Category = tolower(metadata_category), Scope = "any";
-// Open VSX's own block list. Many of its IDs are real extensions on Microsoft's Marketplace,
-// so it only applies to forks.
-let OpenVsxBlockList = externaldata(malicious:dynamic)
-    [@"https://raw.githubusercontent.com/EclipseFdn/publish-extensions/master/extension-control/extensions.json"]
-    with (format="multijson", ingestionMapping='[{"Column":"malicious","Properties":{"Path":"$.malicious"}}]')
-    | mv-expand malicious to typeof(string)
-    | project MatchKey = tolower(malicious), Category = "open-vsx-blocklist", Scope = "fork";
 // Your own entries. An ID alone matches every version. id@version matches one release.
 // Scope: any = every editor, fork = forks only, cursor = Cursor only.
 // The first 3 are IDs that two glued rows in Microsoft's list hide. The next 2 are the
@@ -76,11 +73,11 @@ let ExtraEntries = datatable(MatchKey:string, Category:string, Scope:string) [
     "anthropic.claude-code@2.1.312", "poisoned-release", "cursor",
     "anthropic.claude-code@2.1.313", "poisoned-release", "cursor"
 ];
-let KnownBad = union VsxSentry, OpenVsxBlockList, ExtraEntries
+let KnownBad = union VsxSentry, ExtraEntries
     | where isnotempty(MatchKey) and Category !in (Housekeeping) and Category !startswith "risky"
     | extend Rank = case(
         Category contains "malware" or Category in ("potentially-malicious", "poisoned-release"), 1,
-        Category in ("impersonation", "typo-squatting", "open-vsx-blocklist"), 2,
+        Category in ("impersonation", "typo-squatting"), 2,
         3)
     | distinct MatchKey, Category, Scope, Rank;
 let FileEvidence = DeviceFileEvents
@@ -102,21 +99,24 @@ union FileEvidence, ProcessEvidence
 | extend ExtensionId = tolower(case(isnotempty(InFolder), InFolder, isnotempty(InStorage), InStorage, InCli))
 | where isnotempty(ExtensionId)
 | extend Version = extract(ExtensionPath, 3, Evidence)
-| extend MatchKey = pack_array(ExtensionId, strcat(ExtensionId, "@", Version))
-| mv-expand MatchKey to typeof(string)
-| join kind=inner (KnownBad) on MatchKey
 | extend EditorFolder = case(
     isnotempty(InFolder), extract(ExtensionPath, 1, Evidence),
     isnotempty(InStorage), extract(StoragePath, 1, Evidence),
     ProcessName)
-| where Scope == "any"
-    or (Scope == "fork" and EditorFolder matches regex ForkEditors)
-    or (Scope == "cursor" and EditorFolder startswith "cursor")
 | extend Signal = strcat(Source, ", ", case(
     isnotempty(InFolder) and Evidence has "CachedExtensionVSIXs", "VSIX cache",
     isnotempty(InFolder), "extension folder",
     isnotempty(InStorage), "storage or log folder",
     "install command"))
+// Keep the first event for each device, extension, version, editor and signal. The list
+// lookup below then only has that short table to go through.
+| summarize arg_min(Timestamp, *) by DeviceId, ExtensionId, Version, EditorFolder, Signal
+| extend MatchKey = pack_array(ExtensionId, strcat(ExtensionId, "@", Version))
+| mv-expand MatchKey to typeof(string)
+| lookup kind=inner (KnownBad) on MatchKey
+| where Scope == "any"
+    or (Scope == "fork" and EditorFolder matches regex ForkEditors)
+    or (Scope == "cursor" and EditorFolder startswith "cursor")
 | summarize arg_min(Timestamp, *), BestRank = min(Rank),
         Categories = strcat_array(make_set(Category), ", "),
         Versions = strcat_array(make_set_if(Version, isnotempty(Version)), ", "),
