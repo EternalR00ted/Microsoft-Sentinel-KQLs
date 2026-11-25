@@ -1,0 +1,44 @@
+// Check your telemetry first (hunt)
+//
+// Counts where VS Code extension IDs show up in your Defender data over the last 30 days,
+// one row per signal. Run it before you turn on "Known bad VS Code extension on a device".
+// It uses the same matching as the rule and no lists, so it shows what the rule can see.
+//
+// Run in: Defender portal > Advanced hunting. Needs Defender for Endpoint Plan 2.
+// It only reads data, so it's safe to run any time. It isn't a rule.
+//
+// Reading the result:
+//   - Each row is one way an extension ID reached Defender. More rows is better.
+//   - SampleExtensions should include extensions you know your developers use.
+//   - No "VSIX cache" row means marketplace installs aren't visible in your tenant.
+//   - No rows at all means the rule can't fire for you.
+
+let Lookback = 30d;
+let ExtensionPath = @"(?i)[\\/]\.?([^\\/]+)[\\/](?:data[\\/])?(?:extensions|CachedExtensionVSIXs)[\\/]\.?([^\\/.\s]+\.[^\\/\s]+?)-(\d+\.\d+\.\d+)";
+let StoragePath = @"(?i)[\\/]\.?([^\\/]+)[\\/](?:data[\\/])?(?:User[\\/]globalStorage|User[\\/]workspaceStorage[\\/][^\\/]+|logs[\\/][^\\/]+[\\/](?:window\d+[\\/])?exthost\d*)[\\/]([^\\/.\s]+\.[^\\/\s]+)[\\/]";
+let CliInstall = @"(?i)--install-extension[=\s]+\W?([a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*)";
+let PathTerms = dynamic(["extensions", "CachedExtensionVSIXs", "globalStorage", "workspaceStorage", "exthost", "exthost1"]);
+let FileEvidence = DeviceFileEvents
+    | where Timestamp > ago(Lookback)
+    | where FolderPath has_any (PathTerms)
+    | project Timestamp, DeviceId, Source = strcat("File ", ActionType),
+        Evidence = iff(FolderPath endswith FileName, FolderPath, strcat(FolderPath, @"\", FileName));
+let ProcessEvidence = DeviceProcessEvents
+    | where Timestamp > ago(Lookback)
+    | where ProcessCommandLine has_any (PathTerms) or ProcessCommandLine has "install-extension"
+        or FolderPath has_any (PathTerms) or InitiatingProcessCommandLine has_any (PathTerms)
+    | project Timestamp, DeviceId, Source = "Process",
+        Evidence = strcat(FolderPath, " ", ProcessCommandLine, " ", InitiatingProcessCommandLine);
+union FileEvidence, ProcessEvidence
+| extend InFolder = extract(ExtensionPath, 2, Evidence), InStorage = extract(StoragePath, 2, Evidence), InCli = extract(CliInstall, 1, Evidence)
+| extend ExtensionId = tolower(case(isnotempty(InFolder), InFolder, isnotempty(InStorage), InStorage, InCli))
+| where isnotempty(ExtensionId)
+| extend Signal = strcat(Source, ", ", case(
+    isnotempty(InFolder) and Evidence has "CachedExtensionVSIXs", "VSIX cache",
+    isnotempty(InFolder), "extension folder",
+    isnotempty(InStorage), "storage or log folder",
+    "install command"))
+| summarize Devices = dcount(DeviceId), Extensions = dcount(ExtensionId), Events = count(),
+        SampleExtensions = make_set(ExtensionId, 10), LastSeen = max(Timestamp)
+    by Signal
+| order by Devices desc
