@@ -20,6 +20,9 @@
 //     line as the end of a query and only runs the part your cursor is in.
 //   - If the list can't be downloaded, the whole run fails. That's why this rule reads one
 //     list. The Open VSX list has its own rule in this folder.
+//   - Don't put Isolate device on this rule. It alerts on spam and impersonation too, and
+//     whoever controls the downloaded list would control which devices get isolated. The
+//     two NRT rules in this folder are the ones built for isolation.
 //   - VS Code extracts an extension into a folder with a random name and renames it
 //     afterwards, so the install's own file events don't carry the extension ID. This rule
 //     looks in four other places. Run "Check your telemetry first (hunt).kql" before you
@@ -57,10 +60,15 @@ let VsxSentry = externaldata(
     [@"https://vsxsentry.github.io/feeds/vsxsentry_malicious_feed.csv"]
     with (format="csv", ignoreFirstRecord=true)
     | project MatchKey = tolower(extension_id), Category = tolower(metadata_category), Scope = "any";
+// Real extensions that shipped a poisoned release. A list that names one of these whole
+// would flag every clean install, so an ID alone never matches for them. Only the
+// id@version entries below do. VSXSentry lists both Checkmarx extensions whole today.
+let RealProducts = dynamic(["nrwl.angular-console", "anthropic.claude-code", "checkmarx.ast-results", "checkmarx.cx-dev-assist",
+    "oorzc.ssh-tools", "oorzc.i18n-tools-plus", "oorzc.mind-map", "oorzc.scss-to-css-compile"]);
 // Your own entries. An ID alone matches every version. id@version matches one release.
 // Scope: any = every editor, fork = forks only, cursor = Cursor only.
 // The first 3 are IDs that two glued rows in Microsoft's list hide. The next 2 are the
-// Solidity Pro stealer. The last 5 are poisoned releases of real extensions.
+// Solidity Pro stealer. The last 13 are poisoned releases of real extensions.
 let ExtraEntries = datatable(MatchKey:string, Category:string, Scope:string) [
     "jonasxwebdev.sftp-dss", "impersonation", "any",
     "comp.java-bazel-extension", "impersonation", "any",
@@ -68,13 +76,22 @@ let ExtraEntries = datatable(MatchKey:string, Category:string, Scope:string) [
     "helper-beeps.solidity-pro", "malware", "any",
     "web3devtoolsx.solidity-pro", "malware", "any",
     "nrwl.angular-console@18.95.0", "poisoned-release", "any",
+    "checkmarx.ast-results@2.63.0", "poisoned-release", "any",
+    "checkmarx.ast-results@2.66.0", "poisoned-release", "any",
+    "checkmarx.cx-dev-assist@1.17.0", "poisoned-release", "any",
+    "checkmarx.cx-dev-assist@1.19.0", "poisoned-release", "any",
+    "checkmarx.ast-results@2.53.0", "poisoned-release", "fork",
+    "checkmarx.cx-dev-assist@1.7.0", "poisoned-release", "fork",
     "oorzc.ssh-tools@0.5.1", "poisoned-release", "fork",
     "oorzc.i18n-tools-plus@1.6.8", "poisoned-release", "fork",
+    "oorzc.mind-map@1.0.61", "poisoned-release", "fork",
+    "oorzc.scss-to-css-compile@1.3.4", "poisoned-release", "fork",
     "anthropic.claude-code@2.1.312", "poisoned-release", "cursor",
     "anthropic.claude-code@2.1.313", "poisoned-release", "cursor"
 ];
 let KnownBad = union VsxSentry, ExtraEntries
     | where isnotempty(MatchKey) and Category !in (Housekeeping) and Category !startswith "risky"
+    | where MatchKey !in (RealProducts)
     | extend Rank = case(
         Category contains "malware" or Category in ("potentially-malicious", "poisoned-release"), 1,
         Category in ("impersonation", "typo-squatting"), 2,
